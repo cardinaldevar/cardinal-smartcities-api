@@ -1,0 +1,26 @@
+// MongoDB Playground
+// To disable this template go to Settings | MongoDB | Use Default Template For Playground.
+// Make sure you are connected to enable completions and to be able to run a playground.
+// Use Ctrl+Space inside a snippet or a string literal to trigger completions.
+// Select the database to use.
+use('Cardinal');
+
+db.service.action.insertMany([
+  { position:0,_id:ObjectId("664ff9324ae1d1ad025d8a16"),name: "new",name_es : "Nuevo", icon: "map-marker-circle",library:"MaterialCommunityIcons",color : "0583F2",subcolor:"0460D9",
+  createAt: new Date(),visible:false },
+  { position:3,_id:ObjectId("664e3fa92a9796f0c0b620a3"),name: "init",name_es : "Servicio iniciado", icon: "map-marker-right-outline",library:"MaterialCommunityIcons",color : "0583F2",subcolor:"0460D9",
+  createAt: new Date(),visible:false },
+  { position:6,_id:ObjectId("664e3fa92a9796f0c0b620a4"),name: "visited",name_es : "Visitado", icon: "map-marker-check-outline",library:"MaterialCommunityIcons",color : "0ebe7e",subcolor:"168045",
+  createAt: new Date(),visible:true },
+  { position:9,_id:ObjectId("664e3fa92a9796f0c0b620a5"),name: "repair",name_es : "Reparación", icon: "wrench-outline",library:"MaterialCommunityIcons", color : "f1be36",subcolor:"896B1A",
+  createAt: new Date(),visible:true },
+  { position:12,_id:ObjectId("664ffd3ad8755fd122fe3476"),name: "supervision",name_es : "Supervisión", icon: "eye-outline",library:"MaterialCommunityIcons",color : "f1be36",subcolor:"896B1A",
+  createAt: new Date(),visible:true },
+  { position:15,_id:ObjectId("664e3fa92a9796f0c0b620a6"),name: "incomplete",name_es : "Servicio incompleto", icon: "map-marker-radius-outline",library:"MaterialCommunityIcons",color : "f1be36",subcolor:"896B1A",
+  createAt: new Date(),visible:false },
+  { position:18,_id:ObjectId("6653d8ebba75d7e2b878ff59"),name: "finish",name_es : "Servicio finalizado", icon: "map-marker-radius-outline",library:"MaterialCommunityIcons",color : "0ebe7e",subcolor:"168045",
+  createAt: new Date(),visible:false },
+  { position:99,_id:ObjectId("6653d8ebba75d7e2b878ff5a"),name: "deleted",name_es : "Eliminada", icon: "map-marker-radius-outline",library:"MaterialCommunityIcons",color : "adadad",subcolor:"505050",
+  createAt: new Date(),visible:false },
+]);
+

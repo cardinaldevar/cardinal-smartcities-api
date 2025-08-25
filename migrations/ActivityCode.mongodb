@@ -1,0 +1,18 @@
+// MongoDB Playground
+// To disable this template go to Settings | MongoDB | Use Default Template For Playground.
+// Make sure you are connected to enable completions and to be able to run a playground.
+// Use Ctrl+Space inside a snippet or a string literal to trigger completions.
+// Select the database to use.
+use('Cardinal');
+
+db.activity.code.insertMany([
+  {position:50,_id:ObjectId("66441abbdb9a639bfad94675"),name:'Interval',id:0,color:'000',createAt: new Date(),visible:false,icon: "",library:""},
+  {position:55,_id:ObjectId("66441abbdb9a639bfad94676"),name:'SOS',id:1,color:'b71313',createAt: new Date(),visible:false,icon: "",library:""},
+  {position:60,_id:ObjectId("66441abbdb9a639bfad94677"),name:'Límite de Velocidad',id:22,color:'ba0404',createAt: new Date(),visible:false,icon: "",library:""},
+  {position:65,_id:ObjectId("66441abbdb9a639bfad94678"),name:'Revisión',id:70,color:'ceb41d',createAt: new Date(),visible:false,icon: "",library:""},
+  {position:0,_id:ObjectId("665a8fa5702ef14ed860c06e"),name:'Visitado',id:100,color:'ceb41d',createAt: new Date(),visible:true,icon: "map-marker-check-outline",library:"MaterialCommunityIcons"},
+  {position:3,_id:ObjectId("665a8fa5702ef14ed860c06f"),name:'Instalación dispositivo',id:103,color:'ceb41d',createAt: new Date(),visible:true,icon: "chip",library:"MaterialCommunityIcons"},
+  {position:6,_id:ObjectId("665a8fa5702ef14ed860c070"),name:'Cambio dispositivo',id:106,color:'ceb41d',createAt: new Date(),visible:true,icon: "account-wrench-outline",library:"MaterialCommunityIcons"},
+  {position:10,_id:ObjectId("665a8fa5702ef14ed860c071"),name:'Reparación',id:108,color:'ceb41d',createAt: new Date(),visible:true,icon: "wrench-outline",library:"MaterialCommunityIcons"},
+]);
+

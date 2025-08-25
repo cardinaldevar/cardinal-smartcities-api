@@ -1,0 +1,26 @@
+// MongoDB Playground
+// To disable this template go to Settings | MongoDB | Use Default Template For Playground.
+// Make sure you are connected to enable completions and to be able to run a playground.
+// Use Ctrl+Space inside a snippet or a string literal to trigger completions.
+// Select the database to use.
+use('Cardinal');
+/*
+db.mark.type.insertMany([
+  { _id:ObjectId("64c0476836e046184f98d6ea"),name : "Trash","name_es" : "Residuos", "icon" : "trash", "color" : "FF3eC2",createAt: new Date(),typeModel:'iot',subTypeModel:null },
+  { _id:ObjectId("64c0476836e046184f98d6eb"),name : "Trash/GPS","name_es" : "Residuos/GPS", "icon" : "trash", "color" : "FF3eC2" ,createAt: new Date(),typeModel:'iot',subTypeModel:null},
+  { _id:ObjectId("64c0476836e046184f98d6ec"),name : "Temperature","name_es" : "Temperatura", "icon" : "trash", "color" : "FF3eC2",createAt: new Date(),typeModel:'iot',subTypeModel:null },
+  { _id:ObjectId("64c0476836e046184f98d6ed"),name : "Fluid","name_es" : "Líquido", "icon" : "trash", "color" : "FF3eC2",createAt: new Date(),typeModel:'iot',subTypeModel:null },
+  { _id:ObjectId("650b534b77822e37c83be325") ,name : "Traffic Light",name_es: "Semáforo", icon : "tabler:point", color: "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:null },
+  { _id:ObjectId("650b534b77822e37c83be326"), name : "Trash Bin",name_es: "Contenedor Residuos", icon : "tabler:point", color: "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:null },
+  { _id:ObjectId("650b534b77822e37c83be327") ,name : "Park",name_es: "Plaza", icon : "tabler:point", color: "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:null },
+  { _id:ObjectId("650b534b77822e37c83be328") ,name : "Office",name_es: "Oficina", icon : "mdi:office-building-outline", color: "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:null },
+]);
+*/
+//SubTypes
+db.mark.type.insertMany([
+  { name : "Organic",name_es : "Orgánico", icon : "trash", color : "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:ObjectId("650b534b77822e37c83be326") },
+  { name : "Glass",name_es : "Vidrio", icon : "trash", color : "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:ObjectId("650b534b77822e37c83be326") },
+  { name : "Paper",name_es : "Papel / Cartón", icon : "trash", color : "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:ObjectId("650b534b77822e37c83be326") },
+  { name : "Plastic",name_es : "Plástico", icon : "trash", color : "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:ObjectId("650b534b77822e37c83be326") },
+  { name : "Metalic",name_es : "Metal", icon : "trash", color : "FF3eC2",createAt: new Date(),typeModel:'point',subTypeModel:ObjectId("650b534b77822e37c83be326") },
+]);
