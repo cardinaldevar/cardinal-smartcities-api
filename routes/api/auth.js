@@ -59,7 +59,7 @@ router.post('/',[
     try {
 
         //see if user existe
-        let user = await User.findOne({email,appSystem:true}).populate('company').populate('category').populate({
+        let user = await User.findOne({email,appSystem:true,status:1}).populate('company').populate('category').populate({
             path: 'access.id',
             model: 'core.section',
             select: 'name nameField position'
