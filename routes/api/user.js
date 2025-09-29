@@ -118,6 +118,9 @@ router.post('/detail',[
 router.post('/edit', upload.single('avatar'),auth, async (req,res)=>{
 
     //console.log('POST...',req.user);
+    if(req.user.category.degree >= 2){
+        return res.status(400).json('No tienes permisos');
+    }
 
     const {status,name,email,password,category,fleetAccess,access,backend,alert,alertPhone} = req.body;
     
