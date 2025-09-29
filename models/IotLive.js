@@ -1,9 +1,10 @@
 const mongoose = require('mongoose');
 
-const InvoiceSchema = new mongoose.Schema({
+const IotLiveSchema = new mongoose.Schema({
     _id:{ type:mongoose.SchemaTypes.ObjectId, auto: true  },
     createAt:{ type: Date, default: Date.now},
     lastUpdate:{ type: Date, default: null},
+    reportedAt: { type: Date },
     imei:{ type: String, default: null},
     temperature:{type: Number,default:0},
     value:{type: Number,default:0},
@@ -19,8 +20,12 @@ const InvoiceSchema = new mongoose.Schema({
         type: { type: String, enum: ['Point'], required: true},
         coordinates: { type: Array, required: true},
     },
+    uid:{type: String}, //value for cardinal device
+    s1:{type: Number,default:null}, //value for cardinal device
+    s2:{type: Number,default:null}, //value for cardinal device
+    heartbeat: { type: Date,default:null }
 });
 
-InvoiceSchema.index({ createAt:-1,imei:1 });
+IotLiveSchema.index({ createAt:-1,imei:1 });
 
-module.exports = Invoice = mongoose.model('iot.live',InvoiceSchema);
+module.exports = IotLive = mongoose.model('iot.live',IotLiveSchema);

@@ -139,6 +139,7 @@ router.post('/search',auth, async (req,res) => {
   const {plate,movilnum,category} = req.body;
   const fleetList = req.user.fleetAccess.map(x => new mongoose.Types.ObjectId(x));
   var company = new mongoose.Types.ObjectId(req.user.company);
+  
   try {
 
       let query=[
@@ -147,7 +148,7 @@ router.post('/search',auth, async (req,res) => {
       ];
 
       //check if admin
-      if(req.user.category.degree >= 2){
+      if(req.user.category.degree >= 1){
         query.push({category: {$in:fleetList}})
       }
 
@@ -206,295 +207,196 @@ router.post('/search',auth, async (req,res) => {
 });
 
 
+router.post('/report', [
+    check('vehicle', 'Error').not().isEmpty(),
+    check('startDate', 'Error').not().isEmpty(),
+    check('endDate', 'Error').not().isEmpty()
+], auth, async (req, res) => {
 
-//SEARCH VEHICLES
-router.post('/report',[
-  check('vehicle','Error').not().isEmpty(),
-  check('startDate','Error').not().isEmpty(),
-  check('endDate','Error').not().isEmpty()
-],auth, async (req,res) => {
-  
-  const errors = validationResult(req);
-  if(!errors.isEmpty()){
-      return res.status(400).json({errors: errors.array()});
-  }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
 
- // console.log(req.body)
-  const {vehicle,startDate,endDate,stop} = req.body;
-  const fleetList = req.user.fleetAccess.map(x => new mongoose.Types.ObjectId(x));
-  var company = new mongoose.Types.ObjectId(req.user.company);
-    
-  moment.tz.setDefault(req.user.timezone)
+    const { vehicle, startDate, endDate } = req.body;
+    const company = new mongoose.Types.ObjectId(req.user.company);
 
-  //Find Device ID
-  const {_id:vehicleID} = await Vehicle.findOne({DeviceID:vehicle,company}).select('_id')
- // console.log('vehicleID',vehicleID)
+    moment.tz.setDefault(req.user.timezone);
 
-  let startDateConv = moment(startDate).toDate();
-  let endDateConv = moment(endDate).toDate();
+    let startDateConv = moment(startDate).add(1, 'minute').toDate();
+    let endDateConv = moment(endDate).toDate();
 
-  //console.log(vehicle,startDate,endDate,stop)
+    try {
+        // Find Device ID para la consulta de Actividad
+        const vehicleDoc = await Vehicle.findOne({ DeviceID: vehicle, company }).select('_id');
+        if (!vehicleDoc) {
+            return res.status(404).json({ message: 'Vehículo no encontrado.' });
+        }
+        const vehicleID = vehicleDoc._id;
 
-  try {
+        // 1. OBTENER DATOS DE LA RUTA ORDENADOS CRONOLÓGICAMENTE
+        const query = [{ deviceID: { $eq: vehicle } },
+       // { statusGps: "A" },
+        { dateConv: { $gte: startDateConv } },
+        { dateConv: { $lte: endDateConv } }];
 
-      var query=[{ deviceID: {$eq:vehicle} }, 
-        { statusGps: "A"},
-        { dateConv: { $gte: startDateConv}},
-        { dateConv: { $lte: endDateConv}}];
+        const liveResult = await GpsData.aggregate([
+            { $match: { $and: query } },
+            // Ordenamos del más antiguo al más reciente. ¡Este es el orden correcto!
+            { $sort: { dateConv: 1 } },
+            { $lookup: { from: 'vehicles', localField: 'deviceID', foreignField: 'DeviceID', as: 'vehicle' } },
+            { $unwind: { path: "$vehicle", preserveNullAndEmptyArrays: true } },
+            {
+                $lookup: {
+                    from: 'vehicle_categories', // Corregido a un nombre de colección más estándar, ajústalo si es necesario.
+                    localField: 'vehicle.category',
+                    foreignField: '_id',
+                    as: 'vehicleCategory'
+                }
+            },
+            { $unwind: { path: "$vehicleCategory", preserveNullAndEmptyArrays: true } },
+            {
+                $group: {
+                    _id: null,
+                    route: { $push: "$$ROOT" },
+                    vehicle: {
+                        $first: {
+                            $mergeObjects: [
+                                "$vehicle",
+                                { category: "$vehicleCategory.name" }
+                            ]
+                        }
+                    }
+                },
+            },
+            {
+                $project: {
+                    _id: 0,
+                    route: 1,
+                    vehicle: "$vehicle",
+                },
+            },
+        ]).exec();
 
-      const live = await GpsData.aggregate([
-        { $match: { $and: query } },
-        { $lookup: { from: 'vehicles', localField: 'deviceID', foreignField: 'DeviceID', as: 'vehicle' } },
-        { $unwind: { path: "$vehicle", preserveNullAndEmptyArrays: true } },
-        { 
-          $lookup: {
-            from: 'vehicles.category', // Ajusta el nombre de la colección de categorías según corresponda
-            localField: 'vehicle.category', // El campo que contiene el ObjectId de la categoría
-            foreignField: '_id',
-            as: 'vehicleCategory'
-          }
-        },
-        { $unwind: { path: "$vehicleCategory", preserveNullAndEmptyArrays: true } },
-        { $sort: { dateConv: -1 } },
-        {
-          $group: {
-            _id: null,
-            route: { $push: "$$ROOT" },
-            vehicle: { 
-              $first: { 
-                $mergeObjects: [
-                  "$vehicle", 
-                  { category: "$vehicleCategory.name" }
-                ]
-              } 
-            }
-          },
-        },
-        {
-          $project: {
-            _id: 0,
-            route: 1,
-            vehicle: "$vehicle", // Asegúrate de que 'vehicle' sea un objeto
-          },
-        },
-      ]).exec();
-      // console.log('live',live)
-     // logger.info(JSON.stringify(live, null, 2));
-      if (live.length === 0) {
-        return res.status(404).json({ message: 'No se encontraron datos.' });
-      }
-      
-      let data = {route:[],vehicle:[],activity:[],data:[],status:false,startDate,endDate,distance:0}
-
-      if(live.length >= 1){
-        data['route'] = live[0].route.map(p => { return {
-          _id: p._id,
-          location: p.location,
-          panic: p.panic,
-          deviceID: p.deviceID,
-          time:p.time,
-          dateConv:p.dateConv,
-          statusGps:p.statusGps,
-          Lat:p.Lat,
-          Lng:p.Lng,
-          speed: p.speed,
-          heading: p.heading,
-          date: p.date,
-          altitude:p.altitude,
-          IOstatus: p.IOstatus,
-          analogInput: p.analogInput,
-          externalPower:p.externalPower,
-          internalPower: p.internalPower,
-          vehicle: {color:live[0].vehicle.color,plate:live[0].vehicle.plate},
-          CSQ: p.CSQ,
-          mileage: p.mileage}});
-
-          data['vehicle'] = live[0].vehicle;
-          data['status'] = true;
-          data['data'] = {
-          "type": "LineString",
-          "coordinates":  live[0].route.map(a => a.location.coordinates)
+        if (liveResult.length === 0 || liveResult[0].route.length === 0) {
+            return res.status(404).json({ message: 'No se encontraron datos de GPS para el período seleccionado.' });
         }
 
-        const route = live[0].route;
+        const live = liveResult[0];
+        let data = { route: [], vehicle: {}, activity: [], data: {}, status: false, startDate, endDate, distance: 0 };
 
-        const primerMileage = route[0]?.mileage;
-        const ultimoMileage = route[route.length - 1]?.mileage;
-        const primerMileageKm = primerMileage ? primerMileage / 1000 : 0;
-        const ultimoMileageKm = ultimoMileage ? ultimoMileage / 1000 : 0;
-        const kmsRecorridos = (ultimoMileageKm - primerMileageKm).toFixed(2);
-      
-        data['distance'] = kmsRecorridos;
-        
-      }
+        // 2. FORMATEAR DATOS INICIALES
+        data.route = live.route.map(p => ({
+            _id: p._id, location: p.location, panic: p.panic, deviceID: p.deviceID,
+            time: p.time, dateConv: p.dateConv, statusGps: p.statusGps, Lat: p.Lat, Lng: p.Lng,
+            speed: p.speed, heading: p.heading, date: p.date, altitude: p.altitude,
+            IOstatus: p.IOstatus, analogInput: p.analogInput, externalPower: p.externalPower,
+            internalPower: p.internalPower, vehicle: { color: live.vehicle.color, plate: live.vehicle.plate },
+            CSQ: p.CSQ, mileage: p.mileage
+        }));
+        data.vehicle = live.vehicle;
+        data.status = true;
 
-      //GET Activity of ROUTE
-      data['activity'] = await Activity.aggregate([
-        { $match: { 
-            company,
-            refID:vehicleID,
-            createdAt: { $gte: startDateConv, $lte: endDateConv } 
-        }, },
-        { $lookup:{ from: 'activity.code', localField: 'internalCode', foreignField: 'id', as: 'internalCode'} },
-        { $unwind: { path: "$internalCode", preserveNullAndEmptyArrays: true } },
-        {
-            $project: {
-                _id: '$_id',
-                createdAt:"$createdAt",
-                value:"$value",
-                title:"$title",
-                description:"$description",
-                observation:"$observation",
-                internalCode:"$internalCode.id",
-                internalColor:"$internalCode.color",
-                coordinates:"$location.coordinates"
-            }
-        },
-        { $sort:{createdAt:-1}}
-    ])
-    .allowDiskUse(true)
-    .then(function (res) {
-       // console.log(JSON.stringify(res));
-        return res;
-      });  
+        // 3. OBTENER ACTIVIDADES
+        data.activity = await Activity.aggregate([
+            { $match: { company, refID: vehicleID, createdAt: { $gte: startDateConv, $lte: endDateConv } } },
+            { $lookup: { from: 'activity.code', localField: 'internalCode', foreignField: 'id', as: 'internalCode' } },
+            { $unwind: { path: "$internalCode", preserveNullAndEmptyArrays: true } },
+            {
+                $project: {
+                    _id: '$_id', createdAt: "$createdAt", value: "$value", title: "$title",
+                    description: "$description", observation: "$observation", internalCode: "$internalCode.id",
+                    internalColor: "$internalCode.color", coordinates: "$location.coordinates"
+                }
+            },
+            { $sort: { createdAt: 1 } }
+        ]).allowDiskUse(true);
 
-   //console.log('data[].coordinates',JSON.stringify(data['data'].coordinates))
-      
-      // CALCULATE MATCH MAPPING & DISTANCES
-      // URL de tu servidor OSRM en tu instancia de EC2
-     // const osrmUrl = 'http://ec2-18-219-5-50.us-east-2.compute.amazonaws.com:5000';
-      const osrmUrl = EndPoint[req.user.country_code];
+        // 4. PROCESAMIENTO GEOGRÁFICO Y CÁLCULO DE DISTANCIA CON OSRM
+        const allCoordinates = live.route.map(p => p.location.coordinates);
 
-    //  let origin = live[0].route[0].location.coordinates;
-
-     // console.log('osrmUrl',osrmUrl,req.user.country_code)
-   //   console.log(JSON.stringify(origin))
-      let destination = live[0].route;
-      destination.shift(); // Elimina el primer elemento
-
-      const destinos = destination.map(i => {
-          return i.location.coordinates
-      });
-      
-     // console.log('destination',destination.length)
-    
-      let t =  live[0].route.map(i=>i.location.coordinates )
-     // t.push(origin) OJO CON ESTA LINEA REVISAR
-      
-      //FIX LINE - VERIFICAR LOS PUNTOS A TRAVES DEL TIEMPO SON SIEMPRE IGUALES
-      const line = FixLineString({
-        type: 'Feature',
-        properties: {validate:true},
-        geometry: {
-          type: 'LineString',
-          coordinates: t
-        }
-      });
-    
-     // console.log('---------> FixLineString',JSON.stringify(line))
-
-      var options = {tolerance: 0.0000001, highQuality: true};
-      var simplified = turf.simplify(line, options);
-      let routeSimplified = simplified.geometry.coordinates;
-     // routeSimplified.splice(routeSimplified.length - 1, 1) VERIFICAR SI ES NECESARIO QUITAR EL ITEM
-    // console.log('---------> routeSimplified',JSON.stringify(routeSimplified))
-      const consultaUrl = `${osrmUrl}/route/v1/driving/${routeSimplified.join(';')}?overview=false`;
-
-    // console.log('live - routeSimplified.length',line.geometry.coordinates.length,routeSimplified.length)
-    
-      //Check distance with OSRM
-   /*   data['distance'] = await axios.get(consultaUrl)
-      .then(response => {
-
-       const route = response.data.routes[0];
-       
-       const distance = route.distance / 1000; // La distancia se encuentra en metros, conviértela a kilómetros
-       console.log(`Distancia recorrida: ${distance} km`);
-          return distance;
-      })
-      .catch(error => {
-          console.error('Error en la consulta:', error);
-      });*/
-
-
-      // FUNCTION
-      function splitArray(arr, chunkSize) {
-        let result = [];
-
-        for (let i = 0; i < arr.length; i += chunkSize) {
-            result.push(arr.slice(i, i + chunkSize));
-
-        }
-        
-        return result;
-      } 
-
-      function mergeGeojsonRoutes(routes) {
-        let mergedCoordinates = [];
-        routes.forEach(route => {
-            mergedCoordinates.push(...route.coordinates);
+        const line = FixLineString({
+            type: 'Feature',
+            properties: { validate: true },
+            geometry: { type: 'LineString', coordinates: allCoordinates }
         });
-        return {
-            type: "LineString",
-            coordinates: mergedCoordinates
+
+        if (!line.properties.validate || allCoordinates.length < 2) {
+            data.data = { type: "LineString", coordinates: allCoordinates };
+            data.distance = 0; // No se puede calcular la distancia
+            return res.status(200).json(data);
+        }
+
+        var options = { tolerance: 0.0001, highQuality: false }; // Tolerancia ajustada
+        var simplified = turf.simplify(line, options);
+        let routeSimplified = simplified.geometry.coordinates;
+
+        // FUNCIONES AUXILIARES PARA OSRM
+        const splitArray = (arr, chunkSize) => {
+            const result = [];
+            for (let i = 0; i < arr.length; i += chunkSize) {
+                result.push(arr.slice(i, i + chunkSize));
+            }
+            return result;
         };
-    }
 
-    ///
+        const mergeGeojsonRoutes = (geometries) => ({
+            type: "LineString",
+            coordinates: geometries.flatMap(geo => geo ? geo.coordinates : [])
+        });
 
-      let chunkSize = 20;
-      let segments = splitArray(routeSimplified, chunkSize);
-
-      function fetchRoute(segment) {
-        let coordsString = segment.map(coord => coord.join(',')).join(';');
-        let osrmUrl = `http://ec2-18-219-5-50.us-east-2.compute.amazonaws.com:5000/match/v1/driving/${coordsString}?overview=full&geometries=geojson`;
-    
-        return fetch(osrmUrl)
-            .then(response => response.json())
-            .then(data => {
-              if (data.matchings && data.matchings.length > 0 && data.matchings[0].geometry) {
-                  return data.matchings[0].geometry; // Retorna la geometría si está disponible
-              } else {
-                 // console.error('No se encontraron coincidencias válidas en la respuesta.');
-                  return null; // Maneja el caso cuando no hay coincidencias
-              }
-            })
-            .catch(error => {
-                console.error('Error en la solicitud:', error);
-                return null; // Devuelve null en caso de error
-            });
-    }
-    
-    if(line.properties.validate){
-
-          // LineRoute contain data - Realiza todas las consultas a OSRM en paralelo
-          let routePromises = segments.map(segment => fetchRoute(segment));
-          // let routePromises = [];
-          // routePromises.push(fetchRoute(routeSimplified));
+        const fetchRouteMatch = (segment) => {
+            const coordsString = segment.map(coord => coord.join(',')).join(';');
+            const osrmUrl = `${EndPoint[req.user.country_code]}/match/v1/driving/${coordsString}?overview=full&geometries=geojson`;
             
-          let combinedRoute = await Promise.all(routePromises).then(results => {
+            return axios.get(osrmUrl)
+                .then(response => {
+                    const { data } = response;
+                    if (data.matchings && data.matchings.length > 0) {
+                        const match = data.matchings[0];
+                        return {
+                            geometry: match.geometry,
+                            distance: match.distance // Distancia en metros
+                        };
+                    }
+                    return null;
+                })
+                .catch(error => {
+                    console.error('Error en la solicitud a OSRM:', error.message);
+                    return null;
+                });
+        };
 
-                // Filtra las rutas exitosas
-                let successfulRoutes = results.filter(route => route !== null);
-                // Une las rutas exitosas
-                let combinedRoute = mergeGeojsonRoutes(successfulRoutes);
-            
-                // Muestra la ruta en el mapa
-                //console.log('combinedRoute',JSON.stringify(combinedRoute));
-                return combinedRoute;
-            });
+        // Dividir la ruta simplificada en segmentos y hacer las peticiones
+        let chunkSize = 95; // OSRM a menudo tiene un límite de 100 coordenadas por petición
+        let segments = splitArray(routeSimplified, chunkSize);
+        let routePromises = segments.map(segment => fetchRouteMatch(segment));
 
-      data['data'] = combinedRoute;
-    }else{
-      data['data'] = { type: "LineString", coordinates: line.geometry.coordinates};
+        const combinedRouteData = await Promise.all(routePromises).then(results => {
+            const successfulMatches = results.filter(r => r !== null && r.geometry);
+
+            // Unir las geometrías para dibujar la línea en el mapa
+            const combinedGeometry = mergeGeojsonRoutes(successfulMatches.map(r => r.geometry));
+
+            // Sumar las distancias de cada segmento para obtener el total
+            const totalDistanceInMeters = successfulMatches.reduce((sum, r) => sum + r.distance, 0);
+
+            return {
+                geometry: combinedGeometry,
+                distance: totalDistanceInMeters / 1000 // Convertir a kilómetros
+            };
+        });
+
+        // Asignar los resultados finales al objeto de respuesta
+        data.data = combinedRouteData.geometry;
+        data.distance = combinedRouteData.distance.toFixed(2); // Asignamos la distancia calculada por OSRM
+
+        return res.status(200).json(data);
+
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
-    return res.status(200).json(data);
-
-  }catch(err){
-    console.error(err.message);
-    res.status(500).send('server error');
-  }
-
 });
 
 /* -*********************************************************************************************************** */
@@ -755,36 +657,55 @@ router.post('/vehicle/search',[
       return res.status(400).json([]);
   }
   const {search} = req.body;
-  const companyID = new mongoose.Types.ObjectId(req.user.company);
+  const { user } = req; 
+  const companyID = new mongoose.Types.ObjectId(user.company);
+
+
   try {
 
-    const VehicleQuery = await Vehicle.aggregate([
-      {
-          $search: {
-                  index: "vehicle_name",
-                  "autocomplete": {
-                  "query": search,
-                  "path": "name",
-                  "tokenOrder": "any"
+     const pipeline = [
+            {
+                $search: {
+                    index: "vehicle_name",
+                    "autocomplete": {
+                        "query": search,
+                        "path": "name",
+                        "tokenOrder": "any"
+                    }
                 }
-          }
-        },
-        {$match:{ company: { $eq: companyID }} },
-     {
-          $project: {
-              value: '$DeviceID',
-              label: "$movilnum",
-              name: "$name"
-          }
-      }
-  ]).sort({name:1})
-  .limit(15)
-  .allowDiskUse(true)
-  .then(function (res) {
-      return res;
-  });
-//console.log(JSON.stringify(VehicleQuery))
-    return res.status(200).json(VehicleQuery);
+            }
+        ];
+
+        let matchStage = {
+            company: companyID 
+        };
+
+        // 3. Condición: Si el degree del usuario es mayor a 1, añade el filtro $in
+        if (user.category && user.category.degree > 1) {
+            const fleetAccessObjectIds = user.fleetAccess.map(id => new mongoose.Types.ObjectId(id));
+            matchStage.category = { $in: fleetAccessObjectIds };
+        }
+
+        pipeline.push({ $match: matchStage });
+
+        // 5. Agrega las etapas finales de proyección, orden y límite
+        pipeline.push(
+            {
+                $project: {
+                    value: '$DeviceID',
+                    label: "$movilnum",
+                    name: "$name",
+                    category:"$category",
+                    score: { $meta: "searchScore" } 
+                }
+            },
+            { $sort: { name: 1 } }, // O { score: -1 } para ordenar por relevancia del search
+            { $limit: 15 }
+        );
+
+        // 6. Ejecuta la pipeline de agregación
+        const vehicleQuery = await Vehicle.aggregate(pipeline).allowDiskUse(true);
+        return res.status(200).json(vehicleQuery);
 
   }catch(err){
     console.error(err.message);
@@ -1041,15 +962,28 @@ router.get('/category',auth, async (req,res) => {
 
   try {
 
+    console.log('user',req.user)
+    const user = req.user;
     const objCompanyID = new mongoose.Types.ObjectId(req.user.company);
+
+    // 1. Inicia el objeto de consulta con las condiciones base que siempre se aplican.
+    let queryConditions = {
+        company: objCompanyID,
+        status: { $gte: 1 }
+    };
+
+    // 2. Condición: Si el "degree" del usuario es mayor a 1 (no es admin/superadmin),
+    //    entonces agregamos el filtro de fleetAccess a la consulta.
+    if (user.category && user.category.degree > 1) {
+        queryConditions._id = { $in: user.fleetAccess };
+    }
     
     let counter = [];
-    const CategoryQuery = await VehicleCategory.find({ company: { $eq: objCompanyID }, status: {$gte:1}})
-      .select('_id name status')
-      .sort({name:1})
-      .then((result) => {
-          return result;
-      });
+    const CategoryQuery = await VehicleCategory.find(queryConditions)
+        .select('_id name status')
+        .sort({ name: 1 });
+
+
 
       CategoryQuery.map((item)=>{
 

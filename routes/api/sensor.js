@@ -16,7 +16,7 @@ router.get('/type',auth, async (req,res) => {
        
     try{
 
-        const TypeList = await MarkType.find({typeModel:'iot'});
+        const TypeList = await MarkType.find({ typeModel: 'iot' }).sort({ name_es: 1 });
         return res.status(200).json({TypeList});
 
     }catch(err){
@@ -279,6 +279,35 @@ router.get('/live',auth, async (req,res) => {
      }
  });
 
+
+ function calculateFillLevel(sensorData, containerData) {
+  const totalHeight = containerData.height;
+  const { s1, s2 } = sensorData;
+
+  // 1. Validar que tenemos todos los datos necesarios y que la altura es válida.
+  if (!totalHeight || totalHeight <= 0 || s1 == null || s2 == null) {
+    return 0; // Si no hay datos, el nivel de llenado es 0.
+  }
+
+  // 2. Calcular el espacio vacío promedio.
+  const averageEmptySpace = (s1 + s2) / 2;
+
+  // 3. Calcular la altura del contenido (lleno).
+  let filledHeight = totalHeight - averageEmptySpace;
+
+  // 4. Manejar casos extremos (evitar porcentajes negativos o mayores a 100).
+  if (filledHeight < 0) {
+    filledHeight = 0; // Si el sensor da una lectura mayor a la altura, asumimos 0% lleno.
+  }
+  if (filledHeight > totalHeight) {
+    filledHeight = totalHeight; // Si el sensor da una lectura negativa, asumimos 100% lleno.
+  }
+
+  // 5. Calcular el porcentaje final.
+  const fillPercentage = (filledHeight / totalHeight) * 100;
+
+  return fillPercentage;
+}
  
 //@route POST api/sensor/list
 router.post('/detail',[
@@ -343,6 +372,8 @@ router.post('/detail',[
                         typeOrder: "$typeOrder",
                         width: "$width",
                         length: "$length",
+                        s1: "$s1",
+                        s2: "$s2",
                         capacity: "$capacity" ,
                         location: "$location",
                         latestHistory: 1
@@ -353,6 +384,14 @@ router.post('/detail',[
             .then(function (res) {
               return  res.length > 0 ? res[0] : {};
             });
+
+            //EVAL IF SENSOR IS CARDINAL
+            if(response.typeSensor.name == "Trash/Cardinal"){
+
+                const fillLevel = calculateFillLevel(response.latestHistory, response);
+                response.latestHistory.fillLevel = parseFloat(fillLevel.toFixed(2)); ;
+            }
+            
 
             console.log('response',JSON.stringify(response))
        
