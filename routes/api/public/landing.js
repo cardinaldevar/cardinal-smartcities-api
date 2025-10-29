@@ -92,7 +92,7 @@ router.post('/predict', async (req,res) => {
   try{
     console.log(text)
       //preddict 
-      const url = 'http://127.0.0.1:5500/predict';
+      const url = 'http://ec2-3-146-176-181.us-east-2.compute.amazonaws.com:5500/predict';
       const response = await axios.post(url, { text });
       const predictionPayload = response.data;
       if (!predictionPayload.categories || predictionPayload.categories.length === 0) {
