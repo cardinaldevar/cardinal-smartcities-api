@@ -15,6 +15,7 @@ const multer = require('multer');
 const https = require('https');
 const upload = multer({ storage: multer.memoryStorage({}), limits: { fileSize: 10 * 1024 * 1024 } }); // Límite de 10MB por archivo
 const { uploadFileToS3 } = require('../../../utils/s3helper');
+const { sendDocketEmail } = require('../../../utils/ses');
 
 const companyId = new mongoose.Types.ObjectId('68e9c3977c6f1f402e7b91e0');
 
@@ -392,6 +393,16 @@ router.post('/docket', [
 
         // 3. Guardar el registro de historial
         await initialHistoryEntry.save();
+
+        // Envía el email de confirmación
+        await sendDocketEmail({
+            email: userProfile.email,
+            docketId: newDocket.docketId,
+            description: newDocket.description,
+            address: newDocket.address,
+            location: newDocket.location,
+            details: newDocket.details
+        });
         
 
         res.status(201).json({
