@@ -10,7 +10,7 @@ const sesClient = new SESClient({
 });
 
 const sendDocketEmail = async (docketData) => {
-    const { email, docketId, description, address, location, details, prediction } = docketData;
+    const { email, docketId, description, address, details, prediction } = docketData;
 
     const params = {
         Source: process.env.SES_FROM_EMAIL, // Reemplaza con tu email verificado en SES
@@ -43,7 +43,7 @@ const sendDocketEmail = async (docketData) => {
 };
 
 const getHtmlTemplate = (docketData) => {
-    const { docketId, description, address, location, details, prediction } = docketData;
+    const { docketId, description, address, details, prediction } = docketData;
     // Puedes personalizar esta plantilla HTML como quieras
     return `
         <!DOCTYPE html>
@@ -69,7 +69,6 @@ const getHtmlTemplate = (docketData) => {
                         <li><strong>Descripción:</strong> ${description}</li>
                         <li><strong>Categoría:</strong> ${prediction.name}</li>
                         <li><strong>Dirección:</strong> ${address || 'No especificada'}</li>
-                        <li><strong>Localidad:</strong> ${location || 'No especificada'}</li>
                     </ul>
                     <p>Gracias por tu colaboración.</p>
                 </div>
