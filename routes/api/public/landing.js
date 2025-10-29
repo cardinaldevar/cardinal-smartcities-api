@@ -400,7 +400,6 @@ router.post('/docket', [
             docketId: newDocket.docketId,
             description: newDocket.description,
             address: newDocket.address,
-            location: newDocket.location,
             details: newDocket.details,
             prediction: docketTypePredicted
         });
