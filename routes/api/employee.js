@@ -18,7 +18,7 @@ const mongoose = require('mongoose');
 const { getURLS3, putObjectS3 } = require("../../utils/s3.js");
 
 const fs = require('fs');
-const Jimp = require('jimp');
+const sharp = require('sharp');
 // @route POST API USER
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage({}) });
@@ -47,22 +47,24 @@ router.post('/',auth,
 
     if (req.file) {
 
-        var raw = new Buffer.from(req.file.buffer, 'base64')
-
-        console.log('Uploading file...');
-
+         console.log('Uploading file...');
         Tempfilename = `${Date.now()}_${req.file.originalname}`;
-        await putObjectS3(req.file.buffer, Tempfilename,"employee");
-        // 3) Genera thumbnail y lo sube
-        const img = await Jimp.read(req.file.buffer);
-        const resized  = await img.resize(500, 500).quality(70).getBufferAsync(Jimp.AUTO);
+        await putObjectS3(req.file.buffer, Tempfilename, "employee");
+
+        // Procesamiento de thumbnail con sharp
+        const resized = await sharp(req.file.buffer)
+            .resize({
+                width: 500,
+                height: 500,
+                fit: 'cover' // 'cover' recorta para encajar sin deformar la imagen
+            })
+            .jpeg({ quality: 70 })
+            .toBuffer();
+            
         const thumbKey = `xs_${Tempfilename}`;
-        await putObjectS3(resized, thumbKey,"employee");
+        await putObjectS3(resized, thumbKey, "employee");
 
-
-    } else {
-        console.log('No File in REQUEST');
-    }
+    } 
     
     
     try {

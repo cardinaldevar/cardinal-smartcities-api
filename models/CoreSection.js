@@ -1,18 +1,18 @@
 const mongoose = require('mongoose');
 
-const coreSectionTypeSchema = new mongoose.Schema({
-    name:{ type:String, required: true},
-    nameField:{ type:String},
-    position:{ 
-        type:Number, 
-        required: true,
-        default: 99
+const CoreSectionSchema = new mongoose.Schema({
+    key: { type: String, required: true, unique: true, trim: true},
+    title: { type: String, required: true },
+    path: { type: String, default: null },
+    parentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'core.section',
+        default: null
     },
-    status:{ 
-        type:Number, 
-        required: true,
-        default: 1
-    },
+    icon: { type: String },
+    order: { type: Number, default: 0 },
+    isGroupHeader: { type: Boolean, default: false },
+    status:{ type:Number, required: true, default: 1 }
 });
 
-module.exports = coreSection = mongoose.model('core.section', coreSectionTypeSchema);
+module.exports = coreSection = mongoose.model('core.section2', CoreSectionSchema);

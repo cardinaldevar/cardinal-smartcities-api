@@ -15,7 +15,7 @@ const ExcelJS = require('exceljs');
 const { getURLS3, putObjectS3 } = require("../../utils/s3.js");
 const mongoose = require('mongoose');
 const fs = require('fs');
-const Jimp = require('jimp');
+const sharp = require('sharp');
 // @route POST API USER
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage({}) });
@@ -2662,15 +2662,25 @@ router.post('/poll/save',
     console.log(req.files.length);
     if(req.files){
 
+        for (const [index, itemFile] of req.files.entries()) {
+        const timestamp = Date.now();
+        // Limpiamos el nombre original y aseguramos la extensión .jpg
+        const originalNameClean = itemFile.originalname.split('.').slice(0, -1).join('_').replace(/\s/g, '_');
+        const filename = `${timestamp}_${originalNameClean}.jpg`;
+
+        // Subir imagen original
+        await putObjectS3(itemFile.buffer, filename, "mechanical");
+
+        // Crear y subir la versión optimizada con sharp
+        const resized = await sharp(itemFile.buffer)
+            .resize({ width: 1000 }) // Redimensiona a 1000px de ancho, manteniendo aspect ratio
+            .jpeg({ quality: 70 })   // Asegura el formato JPEG con 70% de calidad
+            .toBuffer();
         
-            for (const [index, itemFile] of req.files.entries()) {
-                const filename = `${Date.now()}_${itemFile.originalname}.jpg`;
-                await putObjectS3(itemFile.buffer, filename, "mechanical");
-                const img     = await Jimp.read(itemFile.buffer);
-                const resized = await img.resize(1000, Jimp.AUTO).quality(70).getBufferAsync(Jimp.AUTO);
-                await putObjectS3(resized, `xs_${filename}`, "mechanical");
-                ResultArray[index].image = filename;
-            }
+        await putObjectS3(resized, `xs_${filename}`, "mechanical");
+        
+        ResultArray[index].image = filename;
+    }
 
     }
 

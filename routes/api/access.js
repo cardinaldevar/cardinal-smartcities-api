@@ -15,7 +15,7 @@ const moment = require('moment');
 const ExcelJS = require('exceljs');
 const { getURLS3, putObjectS3 } = require("../../utils/s3.js");
 const fs = require('fs');
-const Jimp = require('jimp');
+const sharp = require('sharp');
 // @route POST API USER
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage({}) });
@@ -45,22 +45,27 @@ router.post('/', upload.single('avatar'),auth, async (req,res)=>{
 
     if (req.file) {
 
-        //var raw = new Buffer.from(req.file.buffer, 'base64')
-
         Tempfilename = `${Date.now()}_${req.file.originalname}`;
-        // 2) Subida original
-        await putObjectS3(req.file.buffer, Tempfilename,"employee");
-        // 3) Genera thumbnail y lo sube
-        const img = await Jimp.read(req.file.buffer);
-        const resized  = await img.resize(500, 500).quality(70).getBufferAsync(Jimp.AUTO);
-        const thumbKey = `xs_${Tempfilename}`;
-        await putObjectS3(resized, thumbKey,"employee");
-        // 4) Genera URLs firmadas
-        url   = await getURLS3(Tempfilename,60, 'employee');
-        urlXs = await getURLS3(thumbKey,60, 'employee');
+        // Subir imagen original
+        await putObjectS3(req.file.buffer, Tempfilename, "employee");
 
-    } else {
-        console.log('No File in REQUEST');
+        // Generar y subir thumbnail con sharp
+        const resized = await sharp(req.file.buffer)
+            .resize({
+                width: 500,
+                height: 500,
+                fit: 'cover' // Recorta para encajar perfectamente sin deformar
+            })
+            .jpeg({ quality: 70 })
+            .toBuffer();
+            
+        const thumbKey = `xs_${Tempfilename}`;
+        await putObjectS3(resized, thumbKey, "employee");
+
+        // Genera URLs firmadas (sin cambios en esta parte)
+        url   = await getURLS3(Tempfilename, 60, 'employee');
+        urlXs = await getURLS3(thumbKey, 60, 'employee');
+
     }
     
     try {

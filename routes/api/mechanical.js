@@ -16,7 +16,7 @@ const { getURLS3, putObjectS3 } = require("../../utils/s3.js");
 const mongoose = require('mongoose');
 
 const fs = require('fs');
-const Jimp = require('jimp');
+const sharp = require('sharp');
 // @route POST API USER
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage({}) });
@@ -1871,11 +1871,21 @@ router.post('/poll/save',
     if(req.files){
 
         for (const [index, itemFile] of req.files.entries()) {
-            const filename = `${Date.now()}_${itemFile.originalname}.jpg`;
+            const timestamp = Date.now();
+            const originalNameWithoutExt = itemFile.originalname.split('.').slice(0, -1).join('_');
+            const filename = `${timestamp}_${originalNameWithoutExt}.jpg`;
+
+            // Subir imagen original (sin cambios)
             await putObjectS3(itemFile.buffer, filename, "mechanical");
-            const img     = await Jimp.read(itemFile.buffer);
-            const resized = await img.resize(1000, Jimp.AUTO).quality(70).getBufferAsync(Jimp.AUTO);
+
+            // Crear y subir thumbnail/versión optimizada con sharp
+            const resized = await sharp(itemFile.buffer)
+                .resize({ width: 1000 }) // Redimensiona a 1000px de ancho, mantiene aspect ratio
+                .jpeg({ quality: 70 })   // Convierte a JPEG con 70% de calidad
+                .toBuffer();
+            
             await putObjectS3(resized, `xs_${filename}`, "mechanical");
+            
             ResultArray[index].image = filename;
         }
     }

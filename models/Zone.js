@@ -1,22 +1,55 @@
 const mongoose = require('mongoose');
 
 const ZoneSchema = new mongoose.Schema({
-    zone: {
+    name: { 
         type: String,
         required: true
     },
-    status:{
+    createAt:{ 
+        type: Date,
+        default: Date.now 
+    },
+    status: { 
+        type: Number, 
+        required: true 
+    },
+    company:[{
+        type: mongoose.SchemaTypes.ObjectId,
+        ref: 'company'
+    }],
+    type: {
+        type: String, 
+        enum : ['city','municipality','locality','town','custom'],
+        default: null
+    },
+    location : {
+        type: { 
+            type: String, 
+            enum: ['Polygon','MultiPolygon'],
+            required: true
+        },
+        coordinates:{
+            type: Array, 
+            required: true
+        },
+    },
+    keyword:{ 
+        type: String 
+    },
+    priority: {
         type: Number,
-        default:1
+        default: 0
     },
-    public:{
-        type: Boolean,
-        default:false
+    country_code: { 
+        type: String, 
+        enum: ['AR','ES','UY','MX','CO','PY'] 
     },
-    user:{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'users'
+    locked:{ 
+        type:Boolean, 
+        default: false 
     }
 });
 
-module.exports = Zone = mongoose.model('zone',ZoneSchema);
+ZoneSchema.index({ "location": "2dsphere" });
+
+module.exports = mongoose.model('Zone', ZoneSchema, 'zone');

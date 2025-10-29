@@ -151,6 +151,13 @@ const checkAlert = async (doc) => {
 
   const coordinate = [doc.Lng,doc.Lat];
     //CHECK ALL ALERTS CONDITIONS
+    if (!doc.Lng || !doc.Lat || 
+        doc.Lng < -180 || doc.Lng > 180 || 
+        doc.Lat < -90 || doc.Lat > 90) {
+            
+        console.error(`Coordenadas inválidas recibidas para DeviceID ${doc.deviceID}: Lng ${doc.Lng}, Lat ${doc.Lat}. Omitiendo alerta.`);
+        return; // No procesar este documento
+    }
    // console.warn('MATCHED ALERTS ARRAY',matchingAlerts)
 
     matchingAlerts.forEach(async alert => {
@@ -164,7 +171,7 @@ const checkAlert = async (doc) => {
       
         if (alert.evaluationType === 'in') {
           if (isInside) {
-            console.log(`La coordenada está dentro del polígono de la alerta: ${alert.name} ${alert.originID.DeviceID}`);
+            console.log(`La coordenada está dentro del polígono de la alerta: ${alert.name} ${alert.originID.DeviceID} ${alert.originID.movilnum}`);
 
             // IF IS INSIDE CHECK LAST ACTIVITY
 
@@ -222,7 +229,7 @@ const checkAlert = async (doc) => {
             
 
           } else {
-            //console.log(`La coordenada está fuera del polígono de la alerta: ${alert.name} ${alert.originID.DeviceID}`);
+            console.log(`La coordenada está fuera del polígono de la alerta: ${alert.name} ${alert.originID.DeviceID}  ${alert.originID.movilnum}`);
 
           }
 
@@ -230,7 +237,7 @@ const checkAlert = async (doc) => {
           // FLOW OUT ZONE
 
           if (!isInside) {
-          //  console.log(`La coordenada está fuera del polígono de la alerta: ${alert.name} ${alert.originID.DeviceID}`);
+            console.log(`La coordenada está fuera del polígono de la alerta: ${alert.name} ${alert.originID.DeviceID}  ${alert.originID.movilnum}`);
 
 
             //GET TIMEZONE OF COMPANY
@@ -284,8 +291,8 @@ const checkAlert = async (doc) => {
             }
 
 
-          } else {
-           // console.log(`La coordenada está dentro del polígono de la alerta: ${alert.name} ${alert.originID.DeviceID}`);
+          } else { 
+            console.log(`La coordenada está dentro del polígono de la alerta: ${alert.name} ${alert.originID.DeviceID}  ${alert.originID.movilnum}`);
           }
         }
       });
@@ -313,7 +320,7 @@ const AlertJob = () => {
 
 
     const changeStream = Alert.watch(pipeline, {fullDocument: 'updateLookup'}).on('change', data => {
-      // console.log('changeStream = Alert.watch')
+       console.log('changeStream = Alert.watch')
         // RELOAD ALERTS LIST
         GetAlert();
     })

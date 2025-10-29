@@ -23,7 +23,7 @@ connectDB();
 //global = connectDB();
 //console.log('GLOBAL',global); //connect DB
 
-var whitelist = ['https://d3ac-2800-810-505-8007-99ca-abb4-ea51-eb53.ngrok-free.app','https://gemini.cardinal.dev','https://admin.cardinal.dev','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com/','http://localhost:3000','http://localhost:4000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:3000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:5000','http://www.cardinaltigre.com','https://cardinaltigre.com','https://www.cardinaltigre.com','http://api.cardinaltigre.com','https://api.cardinaltigre.com','https://urbaser.cardinal.dev']
+var whitelist = ['https://ts-landing.cardinal.dev','https://gemini.cardinal.dev','https://admin.cardinal.dev','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com/','http://localhost:3000','http://localhost:3001','http://localhost:4000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:3000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:5000','http://www.cardinaltigre.com','https://cardinaltigre.com','https://www.cardinaltigre.com','http://api.cardinaltigre.com','https://api.cardinaltigre.com','https://urbaser.cardinal.dev']
 
 const corsOptions = {
 
@@ -224,8 +224,11 @@ app.use("/api/map", require("./routes/api/map"));
 app.use("/api/garage", require("./routes/api/garage"));
 app.use("/api/V2/fleet", require("./routes/api/fleetV2"));
 app.use("/api/alert", require("./routes/api/alert"));
+app.use("/api/incident", require("./routes/api/incident"));
 //app.use("/api/import", require("./routes/api/IMPORTFLEET"));
 //app.use("/api/position", require("./routes/api/position"));
+//LANDING SERVICES
+app.use("/api/public/landing", require("./routes/api/public/landing"));
 
 //server static assets in production
 /*if(process.env.NODE_ENV === 'production'){

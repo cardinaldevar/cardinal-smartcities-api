@@ -12,7 +12,7 @@ const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const { getURLS3, putObjectS3 } = require("../../utils/s3.js");
-const Jimp = require('jimp');
+const sharp = require('sharp');
 // @route POST API USER
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage({}) });
@@ -34,17 +34,18 @@ router.post('/', upload.single('avatar'),auth, async (req,res)=>{
     const companyID = new mongoose.Types.ObjectId(req.user.company);
     
     if (req.file) {
-
         console.log('Uploading file...');
         Tempfilename = `${Date.now()}_${req.file.originalname}`;
-        await putObjectS3(req.file.buffer, Tempfilename,"employee");
-        const img = await Jimp.read(req.file.buffer);
-        const resized  = await img.resize(256, 256).quality(70).getBufferAsync(Jimp.AUTO);
-        const thumbKey = `xs_${Tempfilename}`;
-        await putObjectS3(resized, thumbKey,"employee");
+        await putObjectS3(req.file.buffer, Tempfilename, "employee");
 
-    } else {
-        console.log('No File in REQUEST');
+        // Procesamiento con sharp
+        const resized = await sharp(req.file.buffer)
+            .resize(256, 256)
+            .jpeg({ quality: 70 })
+            .toBuffer();
+            
+        const thumbKey = `xs_${Tempfilename}`;
+        await putObjectS3(resized, thumbKey, "employee");
     }
     
     try {
@@ -102,9 +103,54 @@ router.post('/detail',[
 
     try{
         
-        const response = await User.findOne({_id,company}).populate('access');
-       
-        return res.status(200).json(response);
+       // const response = await User.findOne({_id,company}).populate('access');
+        const response = await User.aggregate([
+                { $match: { _id, company,}},
+                { $unwind: "$access"},
+                {
+                    $lookup: {
+                    from: "core.section",
+                    localField: "access.id",
+                    foreignField: "_id",
+                    as: "access.details"
+                    }
+                },
+                {
+                    $addFields: {
+                    "access.details": { $arrayElemAt: ["$access.details", 0] }
+                    }
+                },
+
+                // 5. Vuelve a agrupar, pero de una forma más simple
+                //    Guardamos el documento original en un campo y el nuevo array 'access' en otro.
+                {
+                    $group: {
+                    _id: "$_id",
+                    // $$ROOT se refiere al documento completo antes de agrupar.
+                    // Guardamos la primera versión que encontremos en un campo 'doc'.
+                    doc: { $first: "$$ROOT" }, 
+                    // Creamos el nuevo array 'access' con los datos populados.
+                    access: { $push: "$access" } 
+                    }
+                },
+
+                // 6. Fusionamos el nuevo array 'access' dentro del documento guardado
+                {
+                    $addFields: {
+                    "doc.access": "$access"
+                    }
+                },
+                
+                // 7. Reemplazamos la raíz del resultado con nuestro documento ya fusionado
+                {
+                    $replaceRoot: {
+                    newRoot: "$doc"
+                    }
+                }
+                ]);
+
+       console.log(JSON.stringify(response[0]))
+        return res.status(200).json(response[0]);
        
 
     }catch(err){
@@ -139,19 +185,20 @@ router.post('/edit', upload.single('avatar'),auth, async (req,res)=>{
     
     if (req.file) {
 
-        var raw = new Buffer.from(req.file.buffer, 'base64')
-
         console.log('Uploading file...');
         Tempfilename = `${Date.now()}_${req.file.originalname}`;
-        await putObjectS3(req.file.buffer, Tempfilename,"employee");
-        const img = await Jimp.read(req.file.buffer);
-        const resized  = await img.resize(256, 256).quality(70).getBufferAsync(Jimp.AUTO);
-        const thumbKey = `xs_${Tempfilename}`;
-        await putObjectS3(resized, thumbKey,"employee");
+        await putObjectS3(req.file.buffer, Tempfilename, "employee");
 
-    } else {
-        console.log('No File in REQUEST');
-    }
+        // Procesamiento con sharp
+        const resized = await sharp(req.file.buffer)
+            .resize(256, 256)
+            .jpeg({ quality: 70 })
+            .toBuffer();
+            
+        const thumbKey = `xs_${Tempfilename}`;
+        await putObjectS3(resized, thumbKey, "employee");
+
+    } 
     
     try {
 
@@ -460,6 +507,36 @@ router.post('/search',[
       res.status(500).send('server error');
     }
   
+});
+
+
+// EDIT USER
+router.post('/account',auth, async (req,res)=>{
+
+   
+    const {name,password} = req.body;
+    
+    const userID = new mongoose.Types.ObjectId(req.user.id);
+    const companyID = new mongoose.Types.ObjectId(req.user.company);
+
+    try {
+
+        let data = {
+            $set:{ name }};
+        
+        if(password){
+            const salt = await bcrypt.genSalt(10);
+            data.$set.password = await bcrypt.hash(password,salt);
+        }
+        
+        const userQuery = await User.findByIdAndUpdate({_id: userID,company:companyID}, data, { new:  true, runValidators:  true })
+        return res.status(200).json({})
+
+    }catch(err){
+        console.error(err);
+        res.status(500).send('server error');
+    }
+    
 });
 
 module.exports = router;

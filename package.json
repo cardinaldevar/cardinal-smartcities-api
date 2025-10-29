@@ -1,6 +1,6 @@
 {
   "name": "cardinalbackend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "",
   "main": "server.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "aws-postbuild": "SET NODE_ENV=production && npm install --prefix client && npm run build --prefix client",
     "aws": "NPM_CONFIG_PRODUCTION=false concurrently \"npm start server\" \"npm start --prefix client\""
   },
-  "author": "zinc",
+  "author": "Cardinal.dev",
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.806.0",
@@ -31,18 +31,19 @@
     "express": "^4.17.1",
     "express-validator": "^6.1.1",
     "gravatar": "^1.8.0",
-    "jimp": "^0.9.3",
     "jsonwebtoken": "^8.5.1",
     "lodash": "^4.17.21",
     "mime-types": "^2.1.24",
     "moment": "^2.29.4",
     "moment-timezone": "^0.5.45",
     "mongoose": "^8.0.1",
-    "multer": "^1.4.2",
+    "multer": "^2.0.2",
     "nanoid": "^3.3.4",
     "node-cron": "^2.0.3",
     "rand-token": "^1.0.1",
     "request": "^2.88.0",
+    "sharp": "^0.34.4",
+    "slugify": "^1.6.6",
     "socket.io": "^2.3.0",
     "socketio-jwt": "^4.6.2",
     "winston": "^3.17.0"
