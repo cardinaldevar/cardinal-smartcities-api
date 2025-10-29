@@ -2,7 +2,7 @@ const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 
 // Configura las credenciales y la región de AWS
 const sesClient = new SESClient({
-    region: process.env.AWS_REGION,
+    region: 'us-east-1', // Changed to N. Virginia
     credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,

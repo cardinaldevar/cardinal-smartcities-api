@@ -401,7 +401,8 @@ router.post('/docket', [
             description: newDocket.description,
             address: newDocket.address,
             location: newDocket.location,
-            details: newDocket.details
+            details: newDocket.details,
+            prediction: docketTypePredicted
         });
         
 
