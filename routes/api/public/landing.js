@@ -164,16 +164,13 @@ router.post('/register', [
 
         const headers = {
             'Content-Type': 'application/json',
-            // ¡IMPORTANTE! Puede que necesites obtener una cookie nueva desde Postman o tu navegador.
           //  'Cookie': 'ci_session=2228664e187ad9534b9381b378238fad1b0bdf8a' 
         };
         
         const dniApiUrl = 'https://www.tigre.gob.ar/Restserver/vigencia_dni';
         const dniValidationResponse = await axios.post(dniApiUrl, dniValidationPayload,{headers,httpsAgent});
         
-        // --- 3. Verificación de la Respuesta de la API ---
-        // Asumo que una respuesta exitosa tiene una propiedad { "status": "ok" } o similar.
-        // ¡Debes ajustar esta lógica según la respuesta real de la API!
+        
         if (dniValidationResponse.data.error || dniValidationResponse.data.data.mensaje !== 'DNI VIGENTE') {
             console.log('La validación del DNI falló:', dniValidationResponse.data);
             
@@ -396,12 +393,14 @@ router.post('/docket', [
 
         // Envía el email de confirmación
         await sendDocketEmail({
+            company,
             email: userProfile.email,
             docketId: newDocket.docketId,
             description: newDocket.description,
             address: newDocket.address,
             details: newDocket.details,
-            prediction: docketTypePredicted
+            prediction: docketTypePredicted,
+            nameProfile: userProfile.name
         });
         
 
