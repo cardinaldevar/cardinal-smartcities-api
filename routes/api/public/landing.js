@@ -391,17 +391,7 @@ router.post('/docket', [
         // 3. Guardar el registro de historial
         await initialHistoryEntry.save();
 
-        // Envía el email de confirmación
-        await sendDocketEmail({
-            company,
-            email: userProfile.email,
-            docketId: newDocket.docketId,
-            description: newDocket.description,
-            address: newDocket.address,
-            details: newDocket.details,
-            prediction: docketTypePredicted,
-            nameProfile: userProfile.name
-        });
+ 
         
 
         res.status(201).json({

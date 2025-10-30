@@ -18,8 +18,10 @@ const PositionPanic = require('./models/PositionPanic');
 const Vehicle = require('./models/Vehicle');
 const VehicleRoute = require('./utils/VehicleRoute');
 const AlertJob = require('./utils/AlertJob');
+const initializeDocketNotifier = require('./utils/DocketNotify');
 
 connectDB();
+initializeDocketNotifier();
 //global = connectDB();
 //console.log('GLOBAL',global); //connect DB
 

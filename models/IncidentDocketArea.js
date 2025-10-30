@@ -42,6 +42,14 @@ const DocketAreaSchema = new Schema({
         type: [String],
         default: []
     },
+    notify: {
+        type: Boolean,
+        default: false
+    },
+    emails: {
+        type: [String],
+        default: []
+    },
     searchText: {
         type: String,
         trim: true

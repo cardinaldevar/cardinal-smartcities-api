@@ -1541,6 +1541,8 @@ router.get('/area/', auth, async (req, res) => {
           position: 1, 
           keywords: 1, 
           address: 1,
+          notify: 1,
+          emails: 1,
           parentName: { $ifNull: ['$parentDoc.name', null] },
           zone: { $size: { $ifNull: ['$zone', []] } }
         },
@@ -1625,8 +1627,6 @@ router.get('/area/flow', auth, async (req, res) => {
     res.status(500).json({ message: 'Error interno del servidor', error: error.message });
   }
 });
-
-
 
 router.get('/area/name', auth, async (req, res) => {
 
@@ -1717,7 +1717,9 @@ router.post('/area', [auth, [
         status,
         address,
         zone,
-        location
+        location,
+        emails,
+        notify
     } = req.body;
 
     try {
@@ -1742,8 +1744,109 @@ router.post('/area', [auth, [
             status,
             address,
             zone: zone ? zone.map(z => z._id) : [],
-            location
+            location,
+            emails,
+            notify
         });
+
+        await docketArea.save();
+
+        res.json(docketArea);
+
+    } catch (err) {
+        console.error(err.message);
+        if (err.code === 11000) {
+            return res.status(400).json({ errors: [{ msg: 'El slug generado a partir del nombre ya existe. Pruebe con otro nombre.' }] });
+        }
+        if (err.kind === 'ObjectId') {
+            return res.status(400).json({ msg: 'ID con formato incorrecto' });
+        }
+        res.status(500).send('Error del servidor');
+    }
+});
+
+router.get('/area/detail/:id', auth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de área no válido.' });
+        }
+
+        const docketArea = await DocketArea.findOne({ _id: id, company: companyId })
+                                             .populate('parent', 'name slug')
+                                             .populate('zone', 'name');
+
+        if (!docketArea) {
+            return res.status(404).json({ msg: 'Área no encontrada.' });
+        }
+
+        res.json(docketArea);
+
+    } catch (error) {
+        console.error("Error al obtener el detalle del área:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
+
+router.patch('/area/:id', [auth, [
+    check('name', 'El nombre es requerido').not().isEmpty(),
+    check('status', 'El estado es requerido').isNumeric(),
+]], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const {
+        name,
+        parent,
+        position,
+        keywords,
+        status,
+        address,
+        zone,
+        location,
+        emails,
+        notify
+    } = req.body;
+
+    try {
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de área no válido.' });
+        }
+
+        let docketArea = await DocketArea.findOne({ _id: id, company: companyId });
+
+        if (!docketArea) {
+            return res.status(404).json({ msg: 'Área no encontrada.' });
+        }
+
+        let parentId = null;
+        if (parent) {
+            const idToTest = typeof parent === 'object' && parent !== null ? parent._id : parent;
+            if (mongoose.Types.ObjectId.isValid(idToTest)) {
+                parentId = idToTest;
+            } else {
+                return res.status(400).json({ errors: [{ msg: 'El ID del padre proporcionado no es válido.' }] });
+            }
+        }
+
+        docketArea.name = name;
+        docketArea.parent = parentId;
+        docketArea.position = position ? parseInt(position, 10) : 0;
+        docketArea.keywords = keywords;
+        docketArea.status = status;
+        docketArea.address = address;
+        docketArea.zone = zone ? zone.map(z => z._id) : [];
+        docketArea.location = location;
+        docketArea.emails = emails;
+        docketArea.notify = notify;
 
         await docketArea.save();
 
