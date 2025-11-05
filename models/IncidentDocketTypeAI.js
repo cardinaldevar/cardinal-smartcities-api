@@ -3,14 +3,19 @@ const mongoose = require('mongoose');
 const IncidentDocketTypeAISchema = new mongoose.Schema({
     company: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'company',
+        ref: 'Company',
         required: true
     },
     text: {
         type: String,
         required: true
     },
-    category: {
+    docket_type: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'IncidentDocketType',
+        required: true
+    },
+    slug: {
         type: String,
         required: true
     },
@@ -25,8 +30,8 @@ const IncidentDocketTypeAISchema = new mongoose.Schema({
         default: Date.now
     }
 }, {
-    collection: 'incident.docket_types.AImodel', // Specify the collection name
-    timestamps: true // Adds createdAt and updatedAt fields automatically
+    collection: 'incident.docket_types.AImodel',
+    timestamps: true
 });
 
 module.exports = mongoose.model('IncidentDocketTypeAI', IncidentDocketTypeAISchema);

@@ -431,21 +431,22 @@ router.post('/docket', [
 
 router.post('/training', [
     check('text', 'El texto es requerido').not().isEmpty(),
-    check('category', 'La categoría es requerida').not().isEmpty(),
-    check('category', 'La categoría debe ser un ID de MongoDB válido').isMongoId(),
+    check('category', 'El slug de la categoría es requerido').not().isEmpty(),
+    check('_id', 'El ID del tipo de legajo es requerido y debe ser un ID de MongoDB válido').isMongoId(),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
 
-    const { text, category } = req.body;
+    const { text, category, _id } = req.body;
 
     try {
         const newTrainingData = new IncidentDocketTypeAI({
             company: companyId,
             text,
-            category,
+            docket_type: _id,
+            slug: category,
             stage: 'initial'
         });
 
