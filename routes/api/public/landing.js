@@ -86,41 +86,63 @@ router.get('/categories/search', async (req, res) => {
 });
 
 //@access Public
-router.post('/predict', async (req,res) => {
-    
-   const { text } = req.body;
+router.post('/predict', async (req, res) => {
+    const { text } = req.body;
 
-  try{
-    console.log(text)
-      //preddict 
-      const url = 'http://ec2-3-146-176-181.us-east-2.compute.amazonaws.com:5500/predict';
-      const response = await axios.post(url, { text });
-      const predictionPayload = response.data;
-      if (!predictionPayload.categories || predictionPayload.categories.length === 0) {
+    try {
+        // Predicción
+        const url = `${process.env.TIGRESIRVE_NLP_URL}/predict`;
+        const response = await axios.post(url, { text });
+        const predictionPayload = response.data;
+
+        if (!predictionPayload.categories || predictionPayload.categories.length === 0) {
             return res.status(500).json({ error: 'La API de predicción no devolvió categorías.' });
-      }
-        
-      const topPrediction = predictionPayload.categories[0];
-      console.log('topPrediction',topPrediction)
-      //HANDLE THIS ERROR
-      if (!topPrediction._id) { return res.status(200).json(predictionPayload); }
+        }
 
-      const docketTypeInfo = await IncidentDocketType.findById(topPrediction._id).populate('parent');
-      const finalResponse = {
-            prediction: {...topPrediction,
-                name:docketTypeInfo.name,
-                parent: docketTypeInfo.parent?.name || null,
-                fields:docketTypeInfo.fields
-            },
+        console.log('predictionPayload', JSON.stringify(predictionPayload));
+
+        // Extraer todos los IDs de las categorías predichas
+        const categoryIds = predictionPayload.categories.map(cat => cat._id).filter(id => id);
+
+        if (categoryIds.length === 0) {
+            // Si ninguna categoría tiene un ID, devolvemos el payload original.
+            return res.status(200).json(predictionPayload);
+        }
+
+        // Buscar todos los IncidentDocketType correspondientes a los IDs
+        const docketTypes = await IncidentDocketType.find({
+            '_id': { $in: categoryIds }
+        }).populate('parent');
+
+        // Crear un mapa para un acceso eficiente a la información de cada tipo
+        const docketTypesMap = new Map(docketTypes.map(dt => [dt._id.toString(), dt]));
+
+        // Enriquecer las categorías originales con la información de la base de datos, manteniendo el orden
+        const enrichedCategories = predictionPayload.categories.map(cat => {
+            const docketTypeInfo = docketTypesMap.get(cat._id);
+            if (docketTypeInfo) {
+                return {
+                    ...cat,
+                    name: docketTypeInfo.name,
+                    parent: docketTypeInfo.parent?.name || null,
+                    fields: docketTypeInfo.fields
+                };
+            }
+            return cat; 
+        });
+
+        const finalResponse = {
+            prediction: enrichedCategories.length > 0 ? enrichedCategories[0] : null,
+            categories: enrichedCategories,
             sentiment: predictionPayload.sentiment
         };
-        console.log('docketTypeInfo',docketTypeInfo.name)
+
         return res.status(200).json(finalResponse);
 
-  }catch(err){
-      console.error(err.message);
-      res.status(500).send('server error');
-  }
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('server error');
+    }
 });
 
 router.post('/register', [

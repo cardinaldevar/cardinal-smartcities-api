@@ -120,8 +120,14 @@ const IncidentDocketSchema = new Schema({
     },
     sentiments: [SentimentAnalysisSchema],
     subscribers: [{
-        type: Schema.Types.ObjectId,
-        ref: 'incident.profile'
+        _id: false,
+        profile: {
+            type: Schema.Types.ObjectId,
+            ref: 'IncidentProfile'
+        },
+        email: {
+            type: String
+        }
     }],
     zone: {
         type: Schema.Types.ObjectId,

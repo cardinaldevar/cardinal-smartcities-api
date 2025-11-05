@@ -21,7 +21,11 @@ const AlertJob = require('./utils/AlertJob');
 const initializeDocketNotifier = require('./utils/DocketNotify');
 
 connectDB();
-initializeDocketNotifier();
+if(process.env.NODE_ENV === 'production'){ 
+  initializeDocketNotifier();
+  AlertJob();
+}
+
 //global = connectDB();
 //console.log('GLOBAL',global); //connect DB
 
@@ -182,9 +186,7 @@ server.listen(9000, function () {
   log("logs every minute", new Date())
 })
 */
-if(process.env.NODE_ENV === 'production'){ 
-  AlertJob();
-}
+
 
 cron.schedule("1 * * * *",()=> {
   if(process.env.NODE_ENV === 'production'){ 

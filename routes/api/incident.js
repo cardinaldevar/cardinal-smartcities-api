@@ -10,6 +10,7 @@ const DocketSource = require('../../models/IncidentDocketSource');
 const DocketType = require('../../models/IncidentDocketType');
 const DocketHistory = require('../../models/IncidentDocketHistory');
 const moment = require('moment-timezone');
+const https = require('https');
 const mongoose = require('mongoose');
 const axios = require('axios');
 const { getSignedUrlForFile } = require('../../utils/s3helper');
@@ -70,6 +71,7 @@ router.get('/docket/name', auth, async (req, res) => {
                     $project: {
                     _id: 1,
                     name: 1,
+                    fields: 1,
                     parent: "$parentName",
                     score: { $meta: "searchScore" }
                     }
@@ -217,6 +219,99 @@ router.get('/profile', auth, async (req, res) => {
     }
 });
 
+/**
+ * @route   POST api/incident/profile
+ * @desc    Crea un nuevo perfil de incidente (ciudadano)
+ * @access  Private
+ */
+router.post('/profile', [auth, [
+    check('name', 'El nombre es requerido').not().isEmpty(),
+    check('lastname', 'El apellido es requerido').not().isEmpty(),
+    check('dni', 'El DNI es requerido y debe ser numérico').isNumeric().not().isEmpty(),
+    check('email', 'Por favor, incluye un email válido').isEmail(),
+    check('gender', 'El género es requerido').not().isEmpty(),
+    check('birthDate', 'La fecha de nacimiento es requerida').optional().isISO8601().toDate(),
+    check('transactionNumber', 'El número de trámite es requerido').optional().not().isEmpty(),
+]], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const {
+        name,
+        lastname,
+        dni,
+        transactionNumber,
+        email,
+        gender,
+        birthDate,
+    } = req.body;
+
+    try {
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+        //VALIDATE RENAPER
+         const genderForApi = gender === 'male' ? 'M' : gender === 'female' ? 'F' : '';
+                
+          const httpsAgent = new https.Agent({
+              rejectUnauthorized: false
+          });
+  
+          const dniValidationPayload = {
+              token: process.env.token_service_tigre, 
+              dni: dni,
+              sexo: genderForApi,
+              id_tramite: transactionNumber
+          };
+  
+          const headers = {'Content-Type': 'application/json' };
+          const dniApiUrl = 'https://www.tigre.gob.ar/Restserver/vigencia_dni';
+          const dniValidationResponse = await axios.post(dniApiUrl, dniValidationPayload,{headers,httpsAgent});
+          
+          if (dniValidationResponse.data.error || dniValidationResponse.data.data.mensaje !== 'DNI VIGENTE') {
+               return res.status(400).json({ message: 'Los datos del DNI no son válidos o no se pudieron verificar' });
+          }
+
+          // Check if profile already exists for this company
+         const orConditions = [];
+          if (dni) orConditions.push({ dni, company: companyId });
+          //if (email) orConditions.push({ email, company: companyId });
+
+          if (orConditions.length > 0) {
+              let user = await IncidentProfile.findOne({ $or: orConditions });
+              if (user) {
+                  return res.status(400).json({ message: 'Ya existe un perfil con el mismo DNI o Email' });
+              }
+          }
+
+        const newProfile = new IncidentProfile({
+            company: companyId,
+            name,
+            last: lastname, // Map lastname to last
+            dni,
+            transactionNumber,
+            email,
+            gender,
+            birth: birthDate, // Map birthDate to birth
+            isVerified: true, 
+            status: 1
+        });
+
+        await newProfile.save();
+        res.status(201).json({
+            _id: newProfile._id,
+            name: `${newProfile.name} ${newProfile.last} (${newProfile.dni})`
+        });
+
+    } catch (err) {
+        console.error(err.message);
+        if (err.code === 11000) {
+             return res.status(400).json({ message: 'Error de duplicado. El DNI o Email ya existe.' });
+        }
+        res.status(500).send('Error del servidor');
+    }
+});
+
 
 router.get('/zone', auth, async (req, res) => {
 
@@ -269,6 +364,7 @@ router.get('/zone', auth, async (req, res) => {
 router.post('/docket/search', auth, async (req, res) => {
 
   try {
+
     const companyId = new mongoose.Types.ObjectId(req.user.company);
 
     const {
@@ -284,42 +380,39 @@ router.post('/docket/search', auth, async (req, res) => {
       profile,
       zone,
       textSearch 
+
     } = req.body;
 
-    console.log(req.body)
+   // console.log(req.body)
 
     const sortOptions = {};
+
     if (sortBy && sortBy.length > 0) {
+
       let sortField = sortBy[0].id;
-      
       if (sortField === 'profile') {
         sortField = 'profile.name';
       }
 
       const sortOrder = sortBy[0].desc ? -1 : 1;
       sortOptions[sortField] = sortOrder;
+
     } else {
       sortOptions['createdAt'] = -1;
     }
 
-    const matchConditions = {
-      company: companyId,
-      status: { $ne: 'deleted' }
-    };
+    const matchConditions = { company: companyId, status: { $ne: 'deleted' } };
 
-    if (docketId) {
-      matchConditions.docketId = { $regex: docketId.trim(), $options: 'i' };
-    }
-    if (status && status.length > 0) {
-      matchConditions.status = { $in: status };
-    }
+    if (docketId) { matchConditions.docketId = { $regex: docketId.trim(), $options: 'i' }; }
+
+    if (status && status.length > 0) { matchConditions.status = { $in: status }; }
+
     if (docketTypes && docketTypes.length > 0) {
 
         const initialTypeIds = docketTypes.map(dock => new mongoose.Types.ObjectId(dock._id));
+
         const idSearchPipeline = [
-            { 
-                $match: { _id: { $in: initialTypeIds } } 
-            },
+            {  $match: { _id: { $in: initialTypeIds } } },
             {
                 $graphLookup: {
                     from: 'incident.docket_types', // El nombre de tu colección
@@ -340,33 +433,28 @@ router.post('/docket/search', auth, async (req, res) => {
                     }
                 }
             },
-            { 
-                $unwind: '$allRelatedIds' 
-            },
-            { 
-                $group: { _id: '$allRelatedIds' } 
-            }
+            {  $unwind: '$allRelatedIds' },
+            {  $group: { _id: '$allRelatedIds' }  }
         ];
 
         const idDocs = await DocketType.aggregate(idSearchPipeline);
-        // 4. Mapear los resultados a un array plano de ObjectIds
         const allIdsToFilter = idDocs.map(doc => doc._id);
-        // 5. Usar este array final en tu condición de match
+
         if (allIdsToFilter.length > 0) {
             matchConditions.docket_type = { $in: allIdsToFilter };
         } else {
             // Fallback por si algo falla: usar solo los IDs originales
             matchConditions.docket_type = { $in: initialTypeIds };
         }
-        
     }
+
     if (docketArea && docketArea.length > 0) {
+
         const initialAreaIds = docketArea.map(area => new mongoose.Types.ObjectId(area._id));
         console.log(initialAreaIds)
+
         const idSearchPipeline = [
-            { 
-                $match: { _id: { $in: initialAreaIds } } 
-            },
+            {  $match: { _id: { $in: initialAreaIds } } },
             {
                 $graphLookup: {
                     from: 'incident.docket_areas',
@@ -384,17 +472,13 @@ router.post('/docket/search', auth, async (req, res) => {
                     }
                 }
             },
-            { 
-                $unwind: '$allRelatedIds' 
-            },
-            { 
-                $group: { _id: '$allRelatedIds' } 
-            }
+            { $unwind: '$allRelatedIds'  },
+            { $group: { _id: '$allRelatedIds' } }
         ];
 
         const idDocs = await DocketArea.aggregate(idSearchPipeline);
         const allIdsToFilter = idDocs.map(doc => doc._id);
-        
+
         if (allIdsToFilter.length > 0) {
             matchConditions.docket_area = { $in: allIdsToFilter };
         } else {
@@ -405,9 +489,11 @@ router.post('/docket/search', auth, async (req, res) => {
     if (profile && profile.length > 0) {
       matchConditions.profile = { $in: profile.map(p => new mongoose.Types.ObjectId(p._id)) };
     }
+
     if (textSearch) {
         matchConditions.description = { $regex: textSearch.trim(), $options: 'i' };
     }
+
     if (startDate || endDate) {
         matchConditions.createdAt = {};
         if (startDate) matchConditions.createdAt.$gte = new Date(startDate);
@@ -471,7 +557,7 @@ router.post('/docket/search', auth, async (req, res) => {
                                     },
                                     0
                                 ]
-                                }
+                              }
                             },
                             in: '$$initialSentiment.sentiment'
                             }
@@ -500,7 +586,7 @@ router.post('/docket/search', auth, async (req, res) => {
       total: totalDocs, 
       pagination: {
         total: totalDocs,
-        page: page, // Devolvemos el page 0-based
+        page: page, 
         pageSize,
         totalPages: Math.ceil(totalDocs / pageSize),
       }
@@ -510,6 +596,155 @@ router.post('/docket/search', auth, async (req, res) => {
     console.error("Error en la búsqueda de dockets:", error);
     res.status(500).send('Error del servidor');
   }
+});
+
+router.post('/docket', [auth, [
+    check('profile', 'El perfil es requerido').not().isEmpty(),
+    check('docket_type', 'El tipo de legajo es requerido').not().isEmpty(),
+    check('description', 'La descripción es requerida').not().isEmpty(),
+    check('source', 'La fuente es requerida').not().isEmpty(),
+    check('profile._id').custom(value => {
+        if (!mongoose.Types.ObjectId.isValid(value)) {
+            throw new Error('ID de perfil no válido');
+        }
+        return true;
+    }),
+    check('docket_type._id').custom(value => {
+        if (!mongoose.Types.ObjectId.isValid(value)) {
+            throw new Error('ID de tipo de legajo no válido');
+        }
+        return true;
+    }),
+    check('source.value').custom(value => {
+        if (!mongoose.Types.ObjectId.isValid(value)) {
+            throw new Error('ID de fuente no válido');
+        }
+        return true;
+    }),
+    check('docket_area').optional().isArray().withMessage('El área del legajo debe ser un array'),
+    check('docket_area.*._id').optional().isMongoId().withMessage('ID de área no válido en el array'),
+]], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const {
+        profile: profileObj,
+        docket_area,
+        docket_type: docketTypeObj,
+        description,
+        source: sourceObj,
+        details,
+        address
+    } = req.body;
+
+    try {
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        const profileId = profileObj._id;
+        const docketTypeId = docketTypeObj._id;
+        const sourceId = sourceObj.value;
+
+        //validate sentiment
+        const url = `${process.env.TIGRESIRVE_NLP_URL}/sentiment`;
+        const response = await axios.post(url, { text:description });
+        const sentiment = response.data;
+        console.log(description)
+      console.log(sentiment)
+        const initialSentiment = {
+            analysisStage: 'initial',
+            sentiment: sentiment.tone, 
+            sentimentScore: { 
+                positive: sentiment.scores.POSITIVE,
+                negative: sentiment.scores.NEGATIVE,
+                neutral: sentiment.scores.NEUTRAL,
+                mixed: sentiment.scores.MIXED
+            }
+        };
+
+
+      /*  // Validate existence of referenced documents
+        const existingProfile = await IncidentProfile.findById(profileId);
+        if (!existingProfile) {
+            return res.status(400).json({ msg: 'Perfil no encontrado.' });
+        }
+
+        const existingDocketType = await DocketType.findById(docketTypeId);
+        if (!existingDocketType) {
+            return res.status(400).json({ msg: 'Tipo de legajo no encontrado.' });
+        }
+
+        const existingSource = await DocketSource.findById(sourceId);
+        if (!existingSource) {
+            return res.status(400).json({ msg: 'Fuente no encontrada.' });
+        }*/
+
+        // Map docket_area to an array of ObjectIds if provided
+        const docketAreaIds = docket_area ? docket_area.map(area => new mongoose.Types.ObjectId(area._id)) : [];
+
+        const location = details && details.address_location ? details.address_location : null;
+
+        const newDocket = new Docket({
+            company: companyId,
+            profile: profileId,
+            docket_area: docketAreaIds,
+            docket_type: docketTypeId,
+            description,
+            source: sourceId,
+            details,
+            address,
+            location,
+            sentiments: [initialSentiment]
+        });
+
+        await newDocket.save();
+
+        res.status(201).json(newDocket);
+
+    } catch (err) {
+        console.error(err.message);
+        if (err.kind === 'ObjectId') {
+            return res.status(400).json({ msg: 'ID con formato incorrecto' });
+        }
+        res.status(500).send('Error del servidor');
+    }
+});
+
+router.post('/docket/predict/', auth, async (req, res) => { 
+
+  try {
+
+     const { description } = req.body;
+    
+     const url = `${process.env.TIGRESIRVE_NLP_URL}/predict`;
+        const response = await axios.post(url, { text:description });
+        const predictionPayload = response.data;
+        console.log(predictionPayload)
+
+        //findone docket_type
+        if (!predictionPayload.categories || predictionPayload.categories.length === 0) { return res.status(500).json({ error: 'La API de predicción no devolvió categorías.' }); }
+                
+        const topPrediction = predictionPayload.categories[0];
+        if (!topPrediction._id) { return res.status(200).json(predictionPayload); }
+  
+        const docketTypeInfo = await DocketType.findById(topPrediction._id).populate('parent');
+        const finalResponse = {
+              prediction: {...topPrediction,
+                  name:docketTypeInfo.name,
+                  parent: docketTypeInfo.parent?.name || null,
+                  fields:docketTypeInfo.fields
+              },
+              sentiment: predictionPayload.sentiment
+          };
+
+         res.status(200).send(finalResponse);
+
+  } catch (error) {
+     console.error(error.message);
+     res.status(500).send('Error del servidor');
+  }
+
 });
 
 
@@ -1411,6 +1646,71 @@ router.post('/type', [auth, [
     }
 });
 
+router.put('/type/:id', [auth, [
+    check('name', 'El nombre es requerido').not().isEmpty(),
+    check('status', 'El estado es requerido').isNumeric(),
+]], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const {
+        name,
+        parent,
+        position,
+        fields,
+        keywords,
+        status
+    } = req.body;
+
+    try {
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de tipo de legajo no válido.' });
+        }
+
+        let docketType = await DocketType.findOne({ _id: id, company: companyId });
+
+        if (!docketType) {
+            return res.status(404).json({ msg: 'Tipo de legajo no encontrado.' });
+        }
+
+        let parentId = null;
+        if (parent) {
+            const idToTest = typeof parent === 'object' && parent !== null ? parent._id : parent;
+            if (mongoose.Types.ObjectId.isValid(idToTest)) {
+                parentId = idToTest;
+            } else {
+                return res.status(400).json({ errors: [{ msg: 'El ID del padre proporcionado no es válido.' }] });
+            }
+        }
+
+        docketType.name = name;
+        docketType.parent = parentId;
+        docketType.position = position ? parseInt(position, 10) : 0;
+        docketType.fields = fields;
+        docketType.keywords = keywords;
+        docketType.status = status;
+
+        await docketType.save();
+
+        res.json(docketType);
+
+    } catch (err) {
+        console.error(err.message);
+        if (err.code === 11000) {
+            return res.status(400).json({ errors: [{ msg: 'El slug generado a partir del nombre ya existe. Pruebe con otro nombre.' }] });
+        }
+        if (err.kind === 'ObjectId') {
+            return res.status(400).json({ msg: 'ID con formato incorrecto' });
+        }
+        res.status(500).send('Error del servidor');
+    }
+});
+
 
 router.get('/type/detail/:id', auth, async (req, res) => {
     try {
@@ -1860,6 +2160,82 @@ router.patch('/area/:id', [auth, [
         if (err.kind === 'ObjectId') {
             return res.status(400).json({ msg: 'ID con formato incorrecto' });
         }
+        res.status(500).send('Error del servidor');
+    }
+});
+
+router.post('/docket/:id/subscribe', [
+    auth,
+    check('email').optional().isEmail().withMessage('Por favor, provee un email válido.'),
+    check('profileId').optional().isMongoId().withMessage('El ID de perfil no es válido.')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id: docketId } = req.params;
+    const { email, profileId } = req.body;
+
+    if ((!email && !profileId) || (email && profileId)) {
+        return res.status(400).json({ msg: 'Debe proveer un `email` o un `profileId`, pero no ambos.' });
+    }
+
+    try {
+        let newSubscriber;
+        if (email) {
+            newSubscriber = { email: email.toLowerCase() };
+        } else {
+            const profileExists = await IncidentProfile.findById(profileId);
+            if (!profileExists) {
+                return res.status(404).json({ msg: 'Perfil de suscriptor no encontrado.' });
+            }
+            newSubscriber = { profile: profileId };
+        }
+
+        const updatedDocket = await Docket.findByIdAndUpdate(
+            docketId,
+            { $addToSet: { subscribers: newSubscriber } },
+            { new: true }
+        ).populate('subscribers.profile', 'name last email');
+
+        if (!updatedDocket) {
+            return res.status(404).json({ msg: 'Legajo no encontrado.' });
+        }
+
+        res.json({ msg: 'Operación de suscripción completada.', docket: updatedDocket });
+
+    } catch (error) {
+        console.error("Error al suscribir al legajo:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
+
+router.get('/source', auth, async (req, res) => {
+    try {
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        // Find sources that are either specific to the user's company
+        // or are global, locked sources (company: null, locked: true)
+        const sources = await DocketSource.find({
+            status: 1, // Only active sources
+            $or: [
+                { company: companyId },
+                { company: null, locked: true }
+            ]
+        }).select('_id name').sort({ name: 1 });
+
+        // Format the response as requested
+        const formattedSources = sources.map(source => ({
+            value: source._id,
+            label: source.name
+        }));
+
+        res.json(formattedSources);
+
+    } catch (error) {
+        console.error("Error fetching docket sources:", error);
         res.status(500).send('Error del servidor');
     }
 });
