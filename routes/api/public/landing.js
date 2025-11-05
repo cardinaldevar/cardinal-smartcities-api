@@ -16,6 +16,7 @@ const https = require('https');
 const upload = multer({ storage: multer.memoryStorage({}), limits: { fileSize: 10 * 1024 * 1024 } }); // Límite de 10MB por archivo
 const { uploadFileToS3 } = require('../../../utils/s3helper');
 const { sendDocketEmail } = require('../../../utils/ses');
+const IncidentDocketTypeAI = require('../../../models/IncidentDocketTypeAI');
 
 const companyId = new mongoose.Types.ObjectId('68e9c3977c6f1f402e7b91e0');
 
@@ -425,6 +426,36 @@ router.post('/docket', [
     } catch (err) {
         console.error('Error en el endpoint dockets/new:', err.message);
         res.status(500).send('Error del servidor');
+    }
+});
+
+router.post('/training', [
+    check('text', 'El texto es requerido').not().isEmpty(),
+    check('category', 'La categoría es requerida').not().isEmpty(),
+    check('category', 'La categoría debe ser un ID de MongoDB válido').isMongoId(),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { text, category } = req.body;
+
+    try {
+        const newTrainingData = new IncidentDocketTypeAI({
+            company: companyId,
+            text,
+            category,
+            stage: 'initial'
+        });
+
+        await newTrainingData.save();
+
+        res.status(201).json({ msg: 'Datos de entrenamiento guardados exitosamente', data: newTrainingData });
+
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Error del servidor al guardar datos de entrenamiento: ' + err.message });
     }
 });
 
