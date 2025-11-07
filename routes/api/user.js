@@ -21,8 +21,32 @@ const upload = multer({ storage: multer.memoryStorage({}) });
 router.post('/', upload.single('avatar'),auth, async (req,res)=>{
 
     const {status,name,email,password,category,fleetAccess,access,backend,alert,alertPhone} = req.body;
-    let accessN = JSON.parse(access)?.filter(a=>a.value!=0).map(a => {return {id:new mongoose.Types.ObjectId(a.id),value:a.value} });
+    
+    let accessN = {};
+    if (access) {
+        const accessArr = JSON.parse(access);
+        const filteredAccess = accessArr.filter(item => item.value !== 0);
+        const sectionIds = filteredAccess.map(item => new mongoose.Types.ObjectId(item.id));
 
+        if (sectionIds.length > 0) {
+            const sections = await CoreSection.find({ '_id': { $in: sectionIds } }).select('_id key');
+            const sectionMap = sections.reduce((map, section) => {
+                map[section._id.toString()] = section.key;
+                return map;
+            }, {});
+
+            for (const item of filteredAccess) {
+                const key = sectionMap[item.id];
+                if (key) {
+                    let permission = 'read'; // Default to read for value 1
+                    if (item.value === 2) {
+                        permission = 'write';
+                    }
+                    accessN[key] = permission;
+                }
+            }
+        }
+    }
     let statusN = JSON.parse(status);
     let categoryN = new mongoose.Types.ObjectId(category);
     let fleetAccessN = JSON.parse(fleetAccess) ? JSON.parse(fleetAccess).map(a => new mongoose.Types.ObjectId(a)) : [];
@@ -61,9 +85,8 @@ router.post('/', upload.single('avatar'),auth, async (req,res)=>{
             email,
             avatar:Tempfilename ? Tempfilename : null,
             password,
-            status:statusN,
             company: companyID,
-            status:status,
+            status:statusN,
             category:categoryN,
             fleetAccess:fleetAccessN,
             access:accessN,
@@ -170,7 +193,31 @@ router.post('/edit', upload.single('avatar'),auth, async (req,res)=>{
 
     const {status,name,email,password,category,fleetAccess,access,backend,alert,alertPhone} = req.body;
     
-    let accessN = JSON.parse(access)?.filter(a=>a.value!=0).map(a => {return {id:new mongoose.Types.ObjectId(a.id),value:a.value} });
+    let accessN = {};
+    if (access) {
+        const accessArr = JSON.parse(access);
+        const filteredAccess = accessArr.filter(item => item.value !== 0);
+        const sectionIds = filteredAccess.map(item => new mongoose.Types.ObjectId(item.id));
+
+        if (sectionIds.length > 0) {
+            const sections = await CoreSection.find({ '_id': { $in: sectionIds } }).select('_id slug');
+            const sectionMap = sections.reduce((map, section) => {
+                map[section._id.toString()] = section.slug;
+                return map;
+            }, {});
+
+            for (const item of filteredAccess) {
+                const slug = sectionMap[item.id];
+                if (slug) {
+                    let permission = 'read'; // Default to read for value 1
+                    if (item.value === 2) {
+                        permission = 'write';
+                    }
+                    accessN[slug] = permission;
+                }
+            }
+        }
+    }
 
     let statusN = JSON.parse(status);
     let categoryN = new mongoose.Types.ObjectId(category);
@@ -389,7 +436,7 @@ router.get('/category',auth, async (req,res) => {
     try{
         
         const UserQuery = await UserCategory.find({degree: {$gte:1}})
-        .select().sort('name')
+        .select().sort('degree name')
         .then((result) => {
             return result.map(a=> {
                 return {value:a._id,label:a.name};
@@ -446,8 +493,8 @@ router.get('/section',auth, async (req,res) => {
     try{
         
         const SectionQuery = await CoreSection.find({status: {$eq:1}})
-        .select()
-        .sort({ position: 1})
+        .select().populate('parentId','title')
+        .sort({ order: 1})
         .then((result) => {
             return result;
         });

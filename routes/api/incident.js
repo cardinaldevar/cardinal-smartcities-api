@@ -14,6 +14,9 @@ const https = require('https');
 const mongoose = require('mongoose');
 const axios = require('axios');
 const { getSignedUrlForFile } = require('../../utils/s3helper');
+const bcrypt = require('bcryptjs');
+const randtoken = require('rand-token');
+const { sendNewProfileEmail } = require('../../utils/ses');
 
 router.get('/docket/name', auth, async (req, res) => {
 
@@ -72,6 +75,7 @@ router.get('/docket/name', auth, async (req, res) => {
                     _id: 1,
                     name: 1,
                     fields: 1,
+                    category: '$slug',
                     parent: "$parentName",
                     score: { $meta: "searchScore" }
                     }
@@ -79,7 +83,6 @@ router.get('/docket/name', auth, async (req, res) => {
                 ];
 
         const results = await DocketType.aggregate(pipeline);
-        console.log('results',results)
         res.json(results);
 
     } catch (error) {
@@ -210,7 +213,7 @@ router.get('/profile', auth, async (req, res) => {
         ];
 
         const results = await IncidentProfile.aggregate(pipeline);
-        console.log('results',results)
+       // console.log('results',results)
         res.json(results);
 
     } catch (error) {
@@ -231,7 +234,7 @@ router.post('/profile', [auth, [
     check('email', 'Por favor, incluye un email válido').isEmail(),
     check('gender', 'El género es requerido').not().isEmpty(),
     check('birthDate', 'La fecha de nacimiento es requerida').optional().isISO8601().toDate(),
-    check('transactionNumber', 'El número de trámite es requerido').optional().not().isEmpty(),
+   // check('transactionNumber', 'El número de trámite es requerido').optional().not().isEmpty(),
 ]], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -249,29 +252,29 @@ router.post('/profile', [auth, [
     } = req.body;
 
     try {
-        const companyId = new mongoose.Types.ObjectId(req.user.company);
-        //VALIDATE RENAPER
-         const genderForApi = gender === 'male' ? 'M' : gender === 'female' ? 'F' : '';
-                
-          const httpsAgent = new https.Agent({
-              rejectUnauthorized: false
-          });
-  
-          const dniValidationPayload = {
-              token: process.env.token_service_tigre, 
-              dni: dni,
-              sexo: genderForApi,
-              id_tramite: transactionNumber
-          };
-  
-          const headers = {'Content-Type': 'application/json' };
-          const dniApiUrl = 'https://www.tigre.gob.ar/Restserver/vigencia_dni';
-          const dniValidationResponse = await axios.post(dniApiUrl, dniValidationPayload,{headers,httpsAgent});
-          
-          if (dniValidationResponse.data.error || dniValidationResponse.data.data.mensaje !== 'DNI VIGENTE') {
-               return res.status(400).json({ message: 'Los datos del DNI no son válidos o no se pudieron verificar' });
-          }
 
+
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+        const genderForApi = gender === 'male' ? 'M' : gender === 'female' ? 'F' : '';
+        const httpsAgent = new https.Agent({rejectUnauthorized: false});
+        let isVerified = false;
+
+        if(transactionNumber){
+            const dniValidationPayload = {
+                  token: process.env.token_service_tigre, 
+                  dni: dni,
+                  sexo: genderForApi,
+                  id_tramite: transactionNumber
+              };
+      
+              const headers = {'Content-Type': 'application/json' };
+              const dniApiUrl = 'https://www.tigre.gob.ar/Restserver/vigencia_dni';
+              const dniValidationResponse = await axios.post(dniApiUrl, dniValidationPayload,{headers,httpsAgent});
+              
+              if (dniValidationResponse.data.error || dniValidationResponse.data.data.mensaje !== 'DNI VIGENTE') {
+                  return res.status(400).json({ message: 'Los datos del DNI no son válidos o no se pudieron verificar' });
+              }
+          }
           // Check if profile already exists for this company
          const orConditions = [];
           if (dni) orConditions.push({ dni, company: companyId });
@@ -284,24 +287,56 @@ router.post('/profile', [auth, [
               }
           }
 
+          // Auto-generate password (3 letters, 3 numbers) and hash it
+          const chars = randtoken.generate(3, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+          const nums = randtoken.generate(3, '0123456789');
+          let passwordArray = (chars + nums).split('');
+          for (let i = passwordArray.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [passwordArray[i], passwordArray[j]] = [passwordArray[j], passwordArray[i]];
+          }
+          const password = passwordArray.join('');
+          
+          const salt = await bcrypt.genSalt(10);
+          const hashedPassword = await bcrypt.hash(password, salt);
+
         const newProfile = new IncidentProfile({
             company: companyId,
             name,
-            last: lastname, // Map lastname to last
+            last: lastname, 
             dni,
             transactionNumber,
             email,
             gender,
-            birth: birthDate, // Map birthDate to birth
-            isVerified: true, 
-            status: 1
+            birth: birthDate, 
+            isVerified, 
+            status: 1,
+            password: hashedPassword
         });
 
-        await newProfile.save();
-        res.status(201).json({
-            _id: newProfile._id,
-            name: `${newProfile.name} ${newProfile.last} (${newProfile.dni})`
-        });
+       await newProfile.save();
+
+       //add funcion send email
+       if (email) {
+        try {
+          await sendNewProfileEmail({
+            email,
+            name,
+            lastname,
+            dni,
+            password, // The plain text password
+            company: companyId
+          });
+        } catch (emailError) {
+          console.error("Error sending new profile email:", emailError);
+          // Decide if you want to fail the request or just log the error
+        }
+      }
+
+      res.status(201).json({
+          _id: newProfile._id,
+          name: `${newProfile.name} ${newProfile.last} (${newProfile.dni})`
+      });
 
     } catch (err) {
         console.error(err.message);
@@ -636,8 +671,13 @@ router.post('/docket', [auth, [
         description,
         source: sourceObj,
         details,
-        address
+        address,
+        docket_type_stage,
+        sentiments
     } = req.body;
+
+    console.log(JSON.stringify(req.body))
+      
 
     try {
         const companyId = new mongoose.Types.ObjectId(req.user.company);
@@ -645,23 +685,59 @@ router.post('/docket', [auth, [
         const profileId = profileObj._id;
         const docketTypeId = docketTypeObj._id;
         const sourceId = sourceObj.value;
+        let docket_type_predicted;
+        let initialSentiment;
 
-        //validate sentiment
-        const url = `${process.env.TIGRESIRVE_NLP_URL}/sentiment`;
-        const response = await axios.post(url, { text:description });
-        const sentiment = response.data;
-        console.log(description)
-      console.log(sentiment)
-        const initialSentiment = {
-            analysisStage: 'initial',
-            sentiment: sentiment.tone, 
-            sentimentScore: { 
-                positive: sentiment.scores.POSITIVE,
-                negative: sentiment.scores.NEGATIVE,
-                neutral: sentiment.scores.NEUTRAL,
-                mixed: sentiment.scores.MIXED
+
+        //docket preddict
+        //EVALUAR EN QUE ESTADOS SE DEBE HACER EL PREDICT Y SENTIMENT
+        if(docket_type_stage != 'predict'){
+          const url = `${process.env.TIGRESIRVE_NLP_URL}/predict`;
+          const response = await axios.post(url, { text: description });
+          console.log(response.data);
+
+          if (response.data.categories && response.data.categories.length > 0) {
+              const topPrediction = response.data.categories[0];
+              docket_type_predicted = {
+                  refId: topPrediction._id,
+                  name: topPrediction.category,
+                  score: topPrediction.score
+              };
+          }
+          
+          if(response.data.sentiment){
+            const sentimentData = response.data.sentiment;
+            initialSentiment = {
+                analysisStage: 'initial', 
+                sentiment: sentimentData.tone,
+                sentimentScore: {
+                    positive: sentimentData.scores.POSITIVE,
+                    negative: sentimentData.scores.NEGATIVE,
+                    neutral: sentimentData.scores.NEUTRAL,
+                    mixed: sentimentData.scores.MIXED
+                }
+            };
+          }
+        }else{
+
+          const sentimentData = sentiments[0];
+            initialSentiment = {
+                analysisStage: 'initial',
+                sentiment: sentimentData.tone,
+                sentimentScore: {
+                    positive: sentimentData.scores.POSITIVE,
+                    negative: sentimentData.scores.NEGATIVE,
+                    neutral: sentimentData.scores.NEUTRAL,
+                    mixed: sentimentData.scores.MIXED
+                }
+            };
+
+            docket_type_predicted = {
+                refId:docketTypeObj._id,
+                name:docketTypeObj.category,
+                score:docketTypeObj.score
             }
-        };
+        }
 
 
       /*  // Validate existence of referenced documents
@@ -695,12 +771,13 @@ router.post('/docket', [auth, [
             details,
             address,
             location,
-            sentiments: [initialSentiment]
+            sentiments: [initialSentiment],
+            docket_type_predicted
         });
 
         await newDocket.save();
 
-        res.status(201).json(newDocket);
+        res.status(201).json(newDocket.docketId);
 
     } catch (err) {
         console.error(err.message);
@@ -716,6 +793,8 @@ router.post('/docket/predict/', auth, async (req, res) => {
   try {
 
      const { description } = req.body;
+
+     console.log('/docket/predict/',description)
     
      const url = `${process.env.TIGRESIRVE_NLP_URL}/predict`;
         const response = await axios.post(url, { text:description });

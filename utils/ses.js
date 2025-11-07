@@ -36,7 +36,7 @@ const getNewDocketHtmlTemplate = (docketData) => {
                     <p>Hemos recibido tu legajo con la siguiente información:</p>
                     <ul>
                         <li><strong>Descripción:</strong> ${description}</li>
-                        <li><strong>Categoría:</strong> ${prediction?.name || 'No especificada'}</li>
+                        <li><strong>Tipo:</strong> ${prediction?.name || 'No especificada'}</li>
                         <li><strong>Dirección:</strong> ${address || 'No especificada'}</li>
                     </ul>
                     <p>Gracias por tu colaboración. Se te informará mediante esta vía sobre el avance de tu legajo.</p>
@@ -158,4 +158,34 @@ const sendNeighborAssignedDocketEmail = async (docketData) => {
     return sendEmail([email], subject, html);
 };
 
-module.exports = { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail };
+const getNewProfileHtmlTemplate = (profileData) => {
+    const { name, lastname, dni, password, logoUrl, companyName, companyWeb } = profileData;
+    return `
+        <!DOCTYPE html><html><head><style>${getBaseEmailStyles()}</style></head><body>
+            <div class="container">
+                <div class="header">${logoUrl ? `<a href="${companyWeb}" target="_blank"><img src="${logoUrl}" alt="${companyName}"></a>` : ''}</div>
+                <div class="content">
+                    <h2 style="text-align: center; color: #333;">¡Bienvenido/a a la plataforma!</h2>
+                    <p>Hola ${name} ${lastname},</p>
+                    <p>Se ha creado un perfil para ti en nuestra plataforma. A continuación encontrarás tus datos de acceso:</p>
+                    <ul>
+                        <li><strong>DNI:</strong> ${dni}</li>
+                        <li><strong>Contraseña:</strong> ${password}</li>
+                    </ul>
+                    <p>Te recomendamos cambiar tu contraseña después de iniciar sesión por primera vez.</p>
+                </div>
+                <div class="footer"><p>Este es un email automático, por favor no respondas a este mensaje.</p></div>
+            </div>
+        </body></html>
+    `;
+};
+
+const sendNewProfileEmail = async (profileData) => {
+    const { company, email } = profileData;
+    const companyInfo = await getCompanyDataForEmail(company);
+    const html = getNewProfileHtmlTemplate({ ...profileData, ...companyInfo });
+    const subject = `¡Bienvenido/a a ${companyInfo.companyName}!`;
+    return sendEmail([email], subject, html);
+};
+
+module.exports = { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewProfileEmail };

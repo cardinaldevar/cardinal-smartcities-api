@@ -16,8 +16,6 @@ var randtoken = require('rand-token');
 // Implement RefreshTokens
 var refreshTokens = {} 
 
-
-
 /**
  * Convierte una lista plana de secciones en un árbol jerárquico.
  * @param {Array} sections - Lista de secciones permitidas para el usuario.

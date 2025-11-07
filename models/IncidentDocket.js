@@ -6,13 +6,14 @@ const Zone = require('./Zone');
 const PredictionSchema = new Schema({
     refId: {
         type: Schema.Types.ObjectId,
+        ref: 'DocketType', 
         required: true
     },
     name: {
         type: String,
         required: true
     },
-    confidence: {
+    score: {
         type: Number,
         required: true
     },

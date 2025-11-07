@@ -1,5 +1,6 @@
 const IncidentDocket = require('../models/IncidentDocket');
 const IncidentProfile = require('../models/IncidentProfile');
+const DocketType = require('../models/IncidentDocketType');
 const { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail } = require('./ses');
 
 const handleNewDocket = async (docket) => {
@@ -10,6 +11,18 @@ const handleNewDocket = async (docket) => {
             return;
         }
 
+        let predictionData = null;
+        if (docket.docket_type) {
+            const docketTypeInfo = await DocketType.findById(docket.docket_type).select('name parent').populate('parent', 'name');
+            if (docketTypeInfo) {
+                let categoryName = docketTypeInfo.name;
+                if (docketTypeInfo.parent && docketTypeInfo.parent.name) {
+                    categoryName = `${docketTypeInfo.parent.name} > ${categoryName}`;
+                }
+                predictionData = { name: categoryName };
+            }
+        }
+
         console.log(`📧  New Docket [${docket.docketId}]. Triggering email confirmation to ${userProfile.email}.`);
         await sendNewDocketEmail({
             company: docket.company,
@@ -17,7 +30,7 @@ const handleNewDocket = async (docket) => {
             docketId: docket.docketId,
             description: docket.description,
             address: docket.address,
-            prediction: docket.docket_type_predicted,
+            prediction: predictionData,
             nameProfile: userProfile.name
         });
     } catch (error) {
@@ -102,6 +115,7 @@ const initializeDocketNotifier = () => {
                     handleAssignedDocket(change.documentKey._id);
                 } else if (status === 'new') {
                     IncidentDocket.findById(change.documentKey._id).then(docket => {
+                       
                         if (docket) handleNewDocket(docket);
                     });
                 }

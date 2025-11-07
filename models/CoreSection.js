@@ -6,7 +6,7 @@ const CoreSectionSchema = new mongoose.Schema({
     path: { type: String, default: null },
     parentId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'core.section',
+        ref: 'core.section2',
         default: null
     },
     icon: { type: String },
