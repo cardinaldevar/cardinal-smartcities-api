@@ -92,6 +92,130 @@ router.get('/docket/name', auth, async (req, res) => {
 });
 
 
+router.get('/docket/name/expand', auth, async (req, res) => {
+
+    try {
+        const { search: searchTerm } = req.query;
+        const companyId  = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!searchTerm || searchTerm.length < 2) {
+            return res.json([]);
+        }
+
+        const pipeline = [
+                {
+                    $search: {
+                        index: 'docketTypeSearch',	
+                        compound: {
+                            filter: [
+                                { equals: { path: 'status', value: 1 } },
+                                { equals: { path: 'company', value: companyId } }
+                            ],
+                            must: [
+                                {
+                                    text: {
+                                        query: searchTerm, 
+                                        path: 'searchText'
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    $lookup: {
+                    from: "incident.docket_types", 
+                    localField: "parent",    
+                    foreignField: "_id",       
+                    as: "parentDoc" 
+                    }
+                },
+                {
+                    $addFields: {
+                    sortPriority: {
+                        $cond: { if: { $eq: ["$parent", null] }, then: 0, else: 1 }
+                    },
+                    parentName: { $arrayElemAt: ["$parentDoc.name", 0] }
+                    }
+                },
+                // Add lookup for docket_area
+                {
+                    $lookup: {
+                        from: "incident.docket_areas",
+                        localField: "docket_area",
+                        foreignField: "_id",
+                        as: "docketAreaDetails"
+                    }
+                },
+                // Unwind docketAreaDetails to process each area
+                {
+                    $unwind: {
+                        path: "$docketAreaDetails",
+                        preserveNullAndEmptyArrays: true
+                    }
+                },
+                // Lookup parent of each docket area
+                {
+                    $lookup: {
+                        from: "incident.docket_areas",
+                        localField: "docketAreaDetails.parent",
+                        foreignField: "_id",
+                        as: "docketAreaDetails.parentInfo"
+                    }
+                },
+                // Add parentName to docketAreaDetails
+                {
+                    $addFields: {
+                        "docketAreaDetails.parentName": { $arrayElemAt: ["$docketAreaDetails.parentInfo.name", 0] }
+                    }
+                },
+                // Group back to reconstruct the docket_area array
+                {
+                    $group: {
+                        _id: "$_id",
+                        name: { $first: "$name" },
+                        fields: { $first: "$fields" },
+                        category: { $first: "$category" },
+                        parent: { $first: "$parent" },
+                        parentName: { $first: "$parentName" },
+                        score: { $first: "$score" },
+                        docket_area: {
+                            $push: {
+                                _id: "$docketAreaDetails._id",
+                                name: "$docketAreaDetails.name",
+                                parent: "$docketAreaDetails.parentName"
+                            }
+                        }
+                    }
+                },
+                {
+                    $sort: {
+                    sortPriority: 1,
+                    name: 1
+                    }
+                },
+                {
+                    $project: {
+                    _id: 1,
+                    name: 1,
+                    fields: 1,
+                    category: '$slug',
+                    parent: "$parentName",
+                    score: { $meta: "searchScore" },
+                    docket_area: 1 // Include the transformed docket_area
+                    }
+                }
+                ];
+
+        const results = await DocketType.aggregate(pipeline);
+        res.json(results);
+
+    } catch (error) {
+        console.error("Error en la búsqueda de autocomplete con Atlas:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
 /**
  * @route   GET api/incident/docket/search
  * @desc    Busca legajos por docketId para un autocompletado o búsqueda rápida.
@@ -807,12 +931,34 @@ router.post('/docket/predict/', auth, async (req, res) => {
         const topPrediction = predictionPayload.categories[0];
         if (!topPrediction._id) { return res.status(200).json(predictionPayload); }
   
-        const docketTypeInfo = await DocketType.findById(topPrediction._id).populate('parent');
+        let docketTypeInfo = await DocketType.findById(topPrediction._id)
+            .populate('parent') // Populate parent of DocketType
+            .populate({
+                path: 'docket_area',
+                select: 'name parent',
+                populate: {
+                    path: 'parent',
+                    select: 'name'
+                }
+            })
+            .lean(); // Use lean() to get a plain JS object
+
+        if (docketTypeInfo.docket_area) {
+            docketTypeInfo.docket_area = docketTypeInfo.docket_area.map(area => ({
+                _id: area._id,
+                name: area.name,
+                parent: area.parent ? area.parent.name : null
+            }));
+        }
+
+        console.log(docketTypeInfo?.docket_area)
+
         const finalResponse = {
               prediction: {...topPrediction,
                   name:docketTypeInfo.name,
                   parent: docketTypeInfo.parent?.name || null,
-                  fields:docketTypeInfo.fields
+                  fields:docketTypeInfo.fields,
+                  docket_area: docketTypeInfo.docket_area // Added this
               },
               sentiment: predictionPayload.sentiment
           };
@@ -1549,16 +1695,12 @@ router.get('/type/', auth, async (req, res) => {
           as: 'parentDoc',
         },
       },
-
-      // --- "Descomprimir" el resultado del lookup ---
-      // preserveNullAndEmptyArrays: true -> Mantiene los docs que no tienen padre
       {
         $unwind: {
           path: '$parentDoc',
           preserveNullAndEmptyArrays: true,
         },
       },
-
       // --- Proyección: Formatear la salida final ---
       {
         $project: {
@@ -1681,7 +1823,8 @@ router.post('/type', [auth, [
         position,
         fields,
         keywords,
-        status
+        status,
+        docket_area
     } = req.body;
 
     try {
@@ -1698,6 +1841,11 @@ router.post('/type', [auth, [
             }
         }
 
+        let docketAreaIds = [];
+        if (docket_area && Array.isArray(docket_area)) {
+            docketAreaIds = docket_area.map(area => new mongoose.Types.ObjectId(area._id));
+        }
+
         const docketType = new DocketType({
             company: companyId,
             name,
@@ -1705,7 +1853,8 @@ router.post('/type', [auth, [
             position: position ? parseInt(position, 10) : 0,
             fields: fields, // Frontend sends the correct format
             keywords,
-            status
+            status,
+            docket_area: docketAreaIds
         });
 
         await docketType.save();
@@ -1741,7 +1890,8 @@ router.put('/type/:id', [auth, [
         position,
         fields,
         keywords,
-        status
+        status,
+        docket_area
     } = req.body;
 
     try {
@@ -1767,12 +1917,18 @@ router.put('/type/:id', [auth, [
             }
         }
 
+        let docketAreaIds = [];
+        if (docket_area && Array.isArray(docket_area)) {
+            docketAreaIds = docket_area.map(area => new mongoose.Types.ObjectId(area._id));
+        }
+
         docketType.name = name;
         docketType.parent = parentId;
         docketType.position = position ? parseInt(position, 10) : 0;
         docketType.fields = fields;
         docketType.keywords = keywords;
         docketType.status = status;
+        docketType.docket_area = docketAreaIds;
 
         await docketType.save();
 
@@ -1800,11 +1956,28 @@ router.get('/type/detail/:id', auth, async (req, res) => {
             return res.status(400).json({ msg: 'ID de tipo de legajo no válido.' });
         }
 
-        const docketType = await DocketType.findOne({ _id: id, company: companyId })
-                                             .populate('parent', 'name slug');
+        let docketType = await DocketType.findOne({ _id: id, company: companyId })
+            .populate('parent', 'name slug')
+            .populate({
+                path: 'docket_area',
+                select: 'name parent',
+                populate: {
+                    path: 'parent',
+                    select: 'name'
+                }
+            })
+            .lean();
 
         if (!docketType) {
             return res.status(404).json({ msg: 'Tipo de legajo no encontrado.' });
+        }
+
+        if (docketType.docket_area) {
+            docketType.docket_area = docketType.docket_area.map(area => ({
+                _id: area._id,
+                name: area.name,
+                parent: area.parent ? area.parent.name : null
+            }));
         }
 
         res.json(docketType);
@@ -1856,7 +2029,6 @@ router.get('/area/', auth, async (req, res) => {
                 // Ej: Si el slug es 'alerta_tigre', buscará todo lo que empiece con 'alerta_tigre_'
                 const descendantsRegex = new RegExp('^' + rootDoc.slug + '_');
 
-                // 3. Modificamos el matchQuery para incluir el documento raíz Y sus descendientes
                 matchQuery = {
                     company: companyId, // Mantenemos el filtro de compañía
                     $or: [
@@ -1866,39 +2038,22 @@ router.get('/area/', auth, async (req, res) => {
                 };
 
             } else {
-                // No se encontró el doc o no tiene slug, solo buscar por _id
                 matchQuery._id = searchId;
             }
-            // --- FIN DE LA NUEVA LÓGICA ---
 
         } catch (e) {
             console.error("Error al buscar el slug del documento raíz:", e);
-            // Fallback: buscar solo por el ID si la búsqueda del slug falla
             matchQuery._id = searchId;
         }
 
     }
 
-    // 3. Construir las opciones de ordenamiento
-   // let sortOptions = { position: 1, name: 1 };
-    let sortOptions = { slug: 1 };
-    
-    if (sortBy && sortBy.length > 0) {
-      sortOptions = sortBy.reduce((acc, sort) => {
-        acc[sort.id] = sort.desc ? -1 : 1;
-        return acc;
-      }, {});
-    }
-
-    // 4. Construir el Pipeline de Agregación
+    // 3. Construir el Pipeline de Agregación
     const dataPipeline = [
       { $match: matchQuery },
-      { $sort: sortOptions },
-      { $skip: page * pageSize },
-      { $limit: pageSize },
       {
         $lookup: {
-          from: 'incident.docket_areas', 
+          from: 'incident.docket_areas',
           localField: 'parent',
           foreignField: '_id',
           as: 'parentDoc',
@@ -1911,14 +2066,26 @@ router.get('/area/', auth, async (req, res) => {
         },
       },
       {
+        $addFields: {
+          // Usamos el slug del padre como campo de agrupación, o el propio slug si es un padre.
+          sortGroup: { $ifNull: ['$parentDoc.slug', '$slug'] },
+          // Un campo para asegurar que los padres (parent: null) vengan antes que los hijos.
+          isParent: { $cond: { if: { $eq: ['$parent', null] }, then: 0, else: 1 } }
+        }
+      },
+      // Ordenamos por el grupo, luego para poner al padre primero, y finalmente por el slug del item.
+      { $sort: { sortGroup: 1, isParent: 1, slug: 1 } },
+      { $skip: page * pageSize },
+      { $limit: pageSize },
+      {
         $project: {
           _id: 1,
           name: 1,
           parent: 1,
           status: 1,
           slug: 1,
-          position: 1, 
-          keywords: 1, 
+          position: 1,
+          keywords: 1,
           address: 1,
           notify: 1,
           emails: 1,
@@ -1928,7 +2095,6 @@ router.get('/area/', auth, async (req, res) => {
       },
     ];
 
-    // 5. Ejecutar consultas de datos y conteo en paralelo
     const [data, total] = await Promise.all([
       DocketArea.aggregate(dataPipeline),
       DocketArea.countDocuments(matchQuery),
@@ -2074,6 +2240,187 @@ router.get('/area/name', auth, async (req, res) => {
 
     } catch (error) {
         console.error("Error en la búsqueda de autocomplete con Atlas:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
+router.post('/report', [auth, [
+    check('docket_type', 'Los tipos de legajo deben ser un array de IDs válidos').optional().isArray().custom(value => {
+        if (value.some(id => !mongoose.Types.ObjectId.isValid(id))) {
+            throw new Error('Algunos IDs de tipo de legajo no son válidos');
+        }
+        return true;
+    }),
+    check('status', 'Los estados deben ser un array de strings').optional().isArray().custom(value => {
+        if (value.some(s => typeof s !== 'string')) {
+            throw new Error('Algunos estados no son strings válidos');
+        }
+        return true;
+    })
+]], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+        const { docket_type, status, startDate, endDate } = req.body;
+
+        console.log('startDate, endDate',startDate, endDate,req.body)
+
+        const matchConditions = { company: companyId };
+
+        // Si no se especifican estados, usamos un conjunto por defecto.
+        const targetStatus = (status && status.length > 0) ? status : ['new', 'in_progress', 'resolved'];
+        matchConditions.status = { $in: targetStatus };
+
+        // Filtro por rango de fechas
+        if (startDate || endDate) {
+            matchConditions.createdAt = {};
+            if (startDate) matchConditions.createdAt.$gte = new Date(startDate);
+            if (endDate) matchConditions.createdAt.$lte = new Date(endDate);
+        }
+        console.log('matchConditions',matchConditions)
+        // Filtro por tipo de legajo, incluyendo descendientes
+        if (docket_type && docket_type.length > 0) {
+            const initialTypeIds = docket_type.map(id => new mongoose.Types.ObjectId(id));
+
+            const idSearchPipeline = [
+                { $match: { _id: { $in: initialTypeIds } } },
+                {
+                    $graphLookup: {
+                        from: 'incident.docket_types',
+                        startWith: '$_id',
+                        connectFromField: '_id',
+                        connectToField: 'parent',
+                        as: 'descendants',
+                        maxDepth: 10
+                    }
+                },
+                {
+                    $project: {
+                        allRelatedIds: { $concatArrays: [['$_id'], '$descendants._id'] }
+                    }
+                },
+                { $unwind: '$allRelatedIds' },
+                { $group: { _id: '$allRelatedIds' } }
+            ];
+
+            const idDocs = await DocketType.aggregate(idSearchPipeline);
+            const allIdsToFilter = idDocs.map(doc => doc._id);
+
+            if (allIdsToFilter.length > 0) {
+                matchConditions.docket_type = { $in: allIdsToFilter };
+            } else {
+                matchConditions.docket_type = { $in: initialTypeIds };
+            }
+        }
+
+        const barPipeline = [
+            { $match: matchConditions },
+            {
+                $group: {
+                    _id: {
+                        docket_type: '$docket_type',
+                        status: '$status'
+                    },
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $group: {
+                    _id: '$_id.docket_type',
+                    statuses: {
+                        $push: {
+                            k: '$_id.status',
+                            v: '$count'
+                        }
+                    },
+                    total: { $sum: '$count' }
+                }
+            },
+            { $sort: { total: -1 } },
+            { $limit: 8 },
+            {
+                $lookup: {
+                    from: 'incident.docket_types',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'docketTypeInfo'
+                }
+            },
+            {
+                $unwind: {
+                    path: '$docketTypeInfo',
+                    preserveNullAndEmptyArrays: true
+                }
+            },
+            {
+                $project: {
+                    _id: 0,
+                    type: '$docketTypeInfo.name',
+                    ...targetStatus.reduce((acc, s) => {
+                        acc[s] = {
+                            $reduce: {
+                                input: '$statuses',
+                                initialValue: 0,
+                                in: {
+                                    $cond: [
+                                        { $eq: ['$$this.k', s] },
+                                        { $add: ['$$value', '$$this.v'] },
+                                        '$$value'
+                                    ]
+                                }
+                            }
+                        };
+                        return acc;
+                    }, {})
+                }
+            }
+        ];
+
+        const piePipeline = [
+            { $match: matchConditions },
+            { 
+                $group: { 
+                    _id: '$source', 
+                    value: { $sum: 1 } 
+                } 
+            },
+            {
+                $lookup: {
+                    from: 'incident.source',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'sourceInfo'
+                }
+            },
+            {
+                $unwind: {
+                    path: '$sourceInfo',
+                    preserveNullAndEmptyArrays: true
+                }
+            },
+            {
+                $project: {
+                    _id: 0,
+                    id: { $ifNull: ['$sourceInfo.name', 'unknown'] },
+                    label: { $ifNull: ['$sourceInfo.name', 'Desconocido'] },
+                    value: '$value'
+                }
+            }
+        ];
+
+        const [bar, pie] = await Promise.all([
+            Docket.aggregate(barPipeline),
+            Docket.aggregate(piePipeline)
+        ]);
+
+        res.json({ bar, pie, status: targetStatus });
+
+    } catch (error) {
+        console.error("Error en el endpoint /report:", error);
         res.status(500).send('Error del servidor');
     }
 });

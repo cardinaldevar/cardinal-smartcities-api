@@ -20,7 +20,7 @@ const upload = multer({ storage: multer.memoryStorage({}) });
 // CREATE USER
 router.post('/', upload.single('avatar'),auth, async (req,res)=>{
 
-    const {status,name,email,password,category,fleetAccess,access,backend,alert,alertPhone} = req.body;
+    const {status,name,email,password,category,fleetAccess,access,backend,alert,alertPhone,docket_area} = req.body;
     
     let accessN = {};
     if (access) {
@@ -47,6 +47,13 @@ router.post('/', upload.single('avatar'),auth, async (req,res)=>{
             }
         }
     }
+
+    let docketAreaN = [];
+    if (docket_area) {
+        const parsedDocketArea = JSON.parse(docket_area); // Assuming it comes as a JSON string
+        docketAreaN = parsedDocketArea.map(area => new mongoose.Types.ObjectId(area._id));
+    }
+
     let statusN = JSON.parse(status);
     let categoryN = new mongoose.Types.ObjectId(category);
     let fleetAccessN = JSON.parse(fleetAccess) ? JSON.parse(fleetAccess).map(a => new mongoose.Types.ObjectId(a)) : [];
@@ -90,6 +97,7 @@ router.post('/', upload.single('avatar'),auth, async (req,res)=>{
             category:categoryN,
             fleetAccess:fleetAccessN,
             access:accessN,
+            docket_area: docketAreaN,
            // appMechanical:accessArr.mechanicalApp,
             appSystem:backendN,
             phone:phoneN,
@@ -126,55 +134,55 @@ router.post('/detail',[
 
     try{
         
-       // const response = await User.findOne({_id,company}).populate('access');
-        const response = await User.aggregate([
-                { $match: { _id, company,}},
-                { $unwind: "$access"},
-                {
-                    $lookup: {
-                    from: "core.section",
-                    localField: "access.id",
-                    foreignField: "_id",
-                    as: "access.details"
-                    }
-                },
-                {
-                    $addFields: {
-                    "access.details": { $arrayElemAt: ["$access.details", 0] }
-                    }
-                },
-
-                // 5. Vuelve a agrupar, pero de una forma más simple
-                //    Guardamos el documento original en un campo y el nuevo array 'access' en otro.
-                {
-                    $group: {
-                    _id: "$_id",
-                    // $$ROOT se refiere al documento completo antes de agrupar.
-                    // Guardamos la primera versión que encontremos en un campo 'doc'.
-                    doc: { $first: "$$ROOT" }, 
-                    // Creamos el nuevo array 'access' con los datos populados.
-                    access: { $push: "$access" } 
-                    }
-                },
-
-                // 6. Fusionamos el nuevo array 'access' dentro del documento guardado
-                {
-                    $addFields: {
-                    "doc.access": "$access"
-                    }
-                },
-                
-                // 7. Reemplazamos la raíz del resultado con nuestro documento ya fusionado
-                {
-                    $replaceRoot: {
-                    newRoot: "$doc"
-                    }
+        let user = await User.findOne({_id, company})
+            .populate({
+                path: 'docket_area',
+                select: 'name parent',
+                populate: {
+                    path: 'parent',
+                    select: 'name'
                 }
-                ]);
+            })
+            .lean();
 
-       console.log(JSON.stringify(response[0]))
-        return res.status(200).json(response[0]);
-       
+        if (!user) {
+            return res.status(404).json({ msg: 'User not found' });
+        }
+
+        if (user.access) {
+            const accessKeys = Object.keys(user.access);
+            const sections = await CoreSection.find({ 'key': { $in: accessKeys } }).select('_id key');
+            
+            const keyToIdMap = sections.reduce((map, section) => {
+                map[section.key] = section._id;
+                return map;
+            }, {});
+
+            const newAccess = [];
+            for (const [key, permission] of Object.entries(user.access)) {
+                const sectionId = keyToIdMap[key];
+                if (sectionId) {
+                    let value = 0;
+                    if (permission === 'read') {
+                        value = 1;
+                    } else if (permission === 'write') {
+                        value = 2;
+                    }
+                    newAccess.push({ id: sectionId, value: value });
+                }
+            }
+            user.access = newAccess;
+        }
+
+        if (user.docket_area) {
+            user.docket_area = user.docket_area.map(area => ({
+                _id: area._id,
+                name: area.name,
+                parent: area.parent ? area.parent.name : null
+            }));
+        }
+
+        return res.status(200).json(user);
 
     }catch(err){
         console.error(err.message);
@@ -191,7 +199,7 @@ router.post('/edit', upload.single('avatar'),auth, async (req,res)=>{
         return res.status(400).json('No tienes permisos');
     }
 
-    const {status,name,email,password,category,fleetAccess,access,backend,alert,alertPhone} = req.body;
+    const {status,name,email,password,category,fleetAccess,access,backend,alert,alertPhone,docket_area} = req.body;
     
     let accessN = {};
     if (access) {
@@ -200,23 +208,29 @@ router.post('/edit', upload.single('avatar'),auth, async (req,res)=>{
         const sectionIds = filteredAccess.map(item => new mongoose.Types.ObjectId(item.id));
 
         if (sectionIds.length > 0) {
-            const sections = await CoreSection.find({ '_id': { $in: sectionIds } }).select('_id slug');
+            const sections = await CoreSection.find({ '_id': { $in: sectionIds } }).select('_id key');
             const sectionMap = sections.reduce((map, section) => {
-                map[section._id.toString()] = section.slug;
+                map[section._id.toString()] = section.key;
                 return map;
             }, {});
 
             for (const item of filteredAccess) {
-                const slug = sectionMap[item.id];
-                if (slug) {
+                const key = sectionMap[item.id];
+                if (key) {
                     let permission = 'read'; // Default to read for value 1
                     if (item.value === 2) {
                         permission = 'write';
                     }
-                    accessN[slug] = permission;
+                    accessN[key] = permission;
                 }
             }
         }
+    }
+
+    let docketAreaN = [];
+    if (docket_area) {
+        const parsedDocketArea = JSON.parse(docket_area);
+        docketAreaN = parsedDocketArea.map(area => new mongoose.Types.ObjectId(area._id));
     }
 
     let statusN = JSON.parse(status);
@@ -253,17 +267,21 @@ router.post('/edit', upload.single('avatar'),auth, async (req,res)=>{
             $set:{
                 name,
                 email,
-                avatar:Tempfilename ? Tempfilename : null,
                 company: companyID,
                 status:statusN,
                 category:categoryN,
                 fleetAccess:fleetAccessN,
                 access:accessN,
+                docket_area: docketAreaN,
                 appMechanical:false,
                 appSystem:backendN,
                 phone:phoneN,
                 panicAlert:alertN
         }};
+
+        if (req.file) {
+            data.$set.avatar = Tempfilename;
+        }
         
         if(password){
             const salt = await bcrypt.genSalt(10);
@@ -465,17 +483,29 @@ router.post('/del',[
     }
     
     if(req.user.category.degree >= 2){
-        return res.status(400).json('No tienes permisos');
+        return res.status(400).json({ msg:'No tienes permisos'});
     }
 
     const {_id} = req.body;
     const userId = new mongoose.Types.ObjectId(_id);
-  
-    data = {$set:{
-      status: 3
-    }};
+    const PROTECTED_CATEGORY_ID = '5e55e2c748a14901005f392b';
 
     try{
+        // Find the user to be deleted
+        const userToDelete = await User.findById(userId);
+
+        if (!userToDelete) {
+            return res.status(404).json({ msg: 'Usuario no encontrado.' });
+        }
+
+        // Check if the user's category is the protected one
+        if (userToDelete.category.toString() === PROTECTED_CATEGORY_ID) {
+            return res.status(400).json({ msg: 'No se puede eliminar un usuario con esta categoría.' });
+        }
+
+        data = {$set:{
+          status: 3
+        }};
 
         const userQuery = await  User.findByIdAndUpdate({_id: userId}, data, { new:  true, runValidators:  true })
         return res.status(200).json({status:userQuery})

@@ -50,6 +50,10 @@ const DocketTypeSchema = new Schema({
         type: String,
         trim: true
     },
+    docket_area: [{
+        type: Schema.Types.ObjectId,
+        ref: 'DocketArea'
+    }],
     status: {
         type: Number,
         required: true,
