@@ -354,7 +354,7 @@ router.post('/docket', [
         const docketTypePredicted = {
             refId: prediction._id,
             name: prediction.name,
-            confidence: prediction.score
+            score: prediction.score
         };
 
         const profileId = req.user.id;
@@ -386,6 +386,35 @@ router.post('/docket', [
         // --- FIN DE LA MODIFICACIÓN ---
 
         const company = new mongoose.Types.ObjectId("68e9c3977c6f1f402e7b91e0"); //Company TS Tigre Sirve
+
+        //CHECK IF NEAR
+        if (location && location.coordinates && location.coordinates.length === 2) {
+            const nearbyDocket = await IncidentDocket.findOne({
+                company: company,
+                docket_type: prediction._id,
+                status: { $in: ['new', 'assigned', 'in_progress'] },
+                location: {
+                    $near: {
+                        $geometry: {
+                            type: "Point",
+                            coordinates: location.coordinates
+                        },
+                        $maxDistance: 500 // metros
+                    }
+                }
+            });
+
+            if (nearbyDocket) {
+                return res.status(409).json({
+                    msg: 'Ya existe un legajo similar creado recientemente cerca de esta ubicación.',
+                    docketId: nearbyDocket.docketId,
+                    description: nearbyDocket.description,
+                    _id: nearbyDocket._id,
+                    updatedAt: nearbyDocket.updatedAt
+                });
+            }
+        }
+
         const newDocket = new IncidentDocket({
             company:company, // o usar segun la company del user userProfile.company,
             profile: profileId,
