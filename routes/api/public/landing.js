@@ -386,13 +386,17 @@ router.post('/docket', [
         // --- FIN DE LA MODIFICACIÓN ---
 
         const company = new mongoose.Types.ObjectId("68e9c3977c6f1f402e7b91e0"); //Company TS Tigre Sirve
-
+/*
         //CHECK IF NEAR
         if (location && location.coordinates && location.coordinates.length === 2) {
+            const oneMonthAgo = new Date();
+            oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
             const nearbyDocket = await IncidentDocket.findOne({
                 company: company,
                 docket_type: prediction._id,
                 status: { $in: ['new', 'assigned', 'in_progress'] },
+                createdAt: { $gte: oneMonthAgo },
                 location: {
                     $near: {
                         $geometry: {
@@ -413,7 +417,7 @@ router.post('/docket', [
                     updatedAt: nearbyDocket.updatedAt
                 });
             }
-        }
+        }*/
 
         const newDocket = new IncidentDocket({
             company:company, // o usar segun la company del user userProfile.company,
