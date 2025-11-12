@@ -315,9 +315,40 @@ router.post('/docket', [
             return res.status(400).json({ msg: 'No se encontraron los datos del formulario.' });
         }
 
-        const { description, prediction, sentiment, details, address, location } = JSON.parse(req.body.data);
+        const data = JSON.parse(req.body.data);
+        const { description, prediction, sentiment, details, suscribeDocket, docketId, isNewDocket } = data;
 
-        console.log(description, prediction, details, address, location)
+        let address = null;
+        let location = null;
+
+        if (details && details.address && details.address.value) {
+            address = details.address.value.address;
+            location = details.address.value.location;
+        }
+        console.log(JSON.stringify(data))
+        if (suscribeDocket === true && docketId) {
+            const profileId = req.user.id;
+
+            const subscriberObject = { profile: profileId };
+
+            const updatedDocket = await IncidentDocket.findByIdAndUpdate(
+                docketId,
+                { $addToSet: { subscribers: subscriberObject } },
+                { new: true }
+            );
+
+            if (!updatedDocket) {
+                return res.status(404).json({ msg: 'El legajo al que intentas suscribirte no fue encontrado.' });
+            }
+
+            return res.status(201).json({
+                msg: 'Te has suscripto al reclamo exitosamente.',
+                legajo: updatedDocket.docketId
+            });
+        }
+
+
+      //  console.log(description, prediction, details, address, location)
 
         if (!description || !prediction?._id) {
             return res.status(400).json({ msg: 'La descripción y la categoría son requeridas.' });
@@ -343,7 +374,7 @@ router.post('/docket', [
                     // Continuar con los demás archivos
                 }
             }
-            console.log('uploadedFilesData', uploadedFilesData);
+           // console.log('uploadedFilesData', uploadedFilesData);
             details.files = uploadedFilesData;
         }
 
@@ -386,13 +417,13 @@ router.post('/docket', [
         // --- FIN DE LA MODIFICACIÓN ---
 
         const company = new mongoose.Types.ObjectId("68e9c3977c6f1f402e7b91e0"); //Company TS Tigre Sirve
-/*
-        //CHECK IF NEAR
-        if (location && location.coordinates && location.coordinates.length === 2) {
-            const oneMonthAgo = new Date();
-            oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
 
-            const nearbyDocket = await IncidentDocket.findOne({
+        //CHECK IF NEAR
+        if (!isNewDocket && location && location.coordinates && location.coordinates.length === 2) {
+            const oneMonthAgo = new Date();
+            oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 6);
+
+            const nearbyDocket = await IncidentDocket.find({
                 company: company,
                 docket_type: prediction._id,
                 status: { $in: ['new', 'assigned', 'in_progress'] },
@@ -406,18 +437,22 @@ router.post('/docket', [
                         $maxDistance: 500 // metros
                     }
                 }
-            });
+            }).sort({ createdAt: -1 }).select({ _id: 1, docketId: 1, description: 1, updatedAt: 1, address: 1 }).limit(3);
+
+            //agregar un sort de createdAt en forma descendente
 
             if (nearbyDocket) {
                 return res.status(409).json({
                     msg: 'Ya existe un legajo similar creado recientemente cerca de esta ubicación.',
+                    docketFound :nearbyDocket,
+                    /*
                     docketId: nearbyDocket.docketId,
                     description: nearbyDocket.description,
                     _id: nearbyDocket._id,
-                    updatedAt: nearbyDocket.updatedAt
+                    updatedAt: nearbyDocket.updatedAt*/
                 });
             }
-        }*/
+        }
 
         const newDocket = new IncidentDocket({
             company:company, // o usar segun la company del user userProfile.company,

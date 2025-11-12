@@ -1,7 +1,64 @@
 const IncidentDocket = require('../models/IncidentDocket');
 const IncidentProfile = require('../models/IncidentProfile');
 const DocketType = require('../models/IncidentDocketType');
-const { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail } = require('./ses');
+const IncidentDocketHistory = require('../models/IncidentDocketHistory');
+const { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail } = require('./ses');
+
+const handleNewSubscriber = async (change) => {
+    try {
+        const docket = change.fullDocument;
+        const updatedFields = change.updateDescription.updatedFields;
+        
+        // Find the key that indicates a subscriber was added, e.g., "subscribers.2"
+        const subscriberKey = Object.keys(updatedFields).find(key => /^subscribers\.\d+$/.test(key));
+        
+        if (!subscriberKey) {
+            console.log(`Could not identify a specific new subscriber from updatedFields for docket ${change.documentKey._id}.`);
+            return;
+        }
+
+        // The value of this key is the new subscriber object
+        const newSubscriber = updatedFields[subscriberKey];
+
+        if (!newSubscriber) {
+            console.error(`New subscriber data is missing for key ${subscriberKey} in docket ${docket._id}`);
+            return;
+        }
+
+        let notificationEmail;
+        let notificationName = 'Suscriptor';
+
+        if (newSubscriber.profile) {
+            const newSubscriberProfile = await IncidentProfile.findById(newSubscriber.profile);
+            if (!newSubscriberProfile || !newSubscriberProfile.email) {
+                console.error(`Could not find profile or email for new subscriber profile ${newSubscriber.profile}`);
+                return;
+            }
+            notificationEmail = newSubscriberProfile.email;
+            notificationName = newSubscriberProfile.name;
+        } else if (newSubscriber.email) {
+            notificationEmail = newSubscriber.email;
+        }
+
+        if (!notificationEmail) {
+            console.error(`Could not determine email for new subscriber in docket ${docket._id}`);
+            return;
+        }
+
+        console.log(`📧  New Subscriber [${notificationEmail}] to Docket [${docket.docketId}]. Triggering email notification.`);
+
+        await sendNewSubscriberEmail({
+            email: notificationEmail,
+            nameProfile: notificationName,
+            docketId: docket.docketId,
+            address: docket.address,
+            company: docket.company
+        });
+
+    } catch (error) {
+        console.error(`Error handling new subscriber notification for docket ${change.documentKey._id}:`, error);
+    }
+};
 
 const handleNewDocket = async (docket) => {
     try {
@@ -86,38 +143,132 @@ const handleAssignedDocket = async (docketId) => {
     }
 };
 
+const handleStatusChange = async (docketId, status, statusText, emailSender) => {
+    try {
+        const [docket, history] = await Promise.all([
+            IncidentDocket.findById(docketId)
+                .populate('profile', 'name email')
+                .populate('subscribers.profile', 'name email'),
+            IncidentDocketHistory.findOne({ docket: docketId, status: status }).sort({ createdAt: -1 })
+        ]);
+
+        if (!docket) {
+            console.error(`Docket ${docketId} not found for '${status}' notification.`);
+            return;
+        }
+
+        const observation = history ? history.content : null;
+        const emailRecipients = new Map();
+
+        // Add original profile
+        if (docket.profile && docket.profile.email) {
+            emailRecipients.set(docket.profile.email, { email: docket.profile.email, name: docket.profile.name });
+        }
+
+        // Add subscribers
+        if (docket.subscribers && docket.subscribers.length > 0) {
+            for (const sub of docket.subscribers) {
+                if (sub.profile && sub.profile.email && !emailRecipients.has(sub.profile.email)) {
+                    emailRecipients.set(sub.profile.email, { email: sub.profile.email, name: sub.profile.name });
+                } else if (sub.email && !emailRecipients.has(sub.email)) {
+                    emailRecipients.set(sub.email, { email: sub.email, name: 'Suscriptor' });
+                }
+            }
+        }
+
+        if (emailRecipients.size === 0) {
+            console.log(`No recipients found for '${status}' notification for docket ${docket.docketId}.`);
+            return;
+        }
+
+        console.log(`📧  Docket [${docket.docketId}] is ${statusText}. Triggering email to ${emailRecipients.size} recipient(s).`);
+
+        const emailPromises = Array.from(emailRecipients.values()).map(recipient =>
+            emailSender({
+                email: recipient.email,
+                nameProfile: recipient.name,
+                docketId: docket.docketId,
+                description: docket.description,
+                company: docket.company,
+                observation: observation
+            })
+        );
+
+        await Promise.all(emailPromises);
+
+    } catch (error) {
+        console.error(`Error handling '${status}' docket notification for ${docketId}:`, error);
+    }
+};
+
+const handleInProgressDocket = (docketId) => {
+    handleStatusChange(docketId, 'in_progress', 'En Progreso', sendInProgressDocketEmail);
+};
+
+const handleOnHoldDocket = (docketId) => {
+    handleStatusChange(docketId, 'on_hold', 'Observado', sendOnHoldDocketEmail);
+};
+
+const handleResolvedDocket = (docketId) => {
+    handleStatusChange(docketId, 'resolved', 'Resuelto', sendResolvedDocketEmail);
+};
+
 const initializeDocketNotifier = () => {
-    console.log('🔔 Docket Notifier Initialized. Watching for status changes...');
+    console.log('🔔 Docket Notifier Initialized. Watching for changes...');
 
     try {
         const pipeline = [
             {
+                $addFields: {
+                    updatedFieldKeys: { $ifNull: [{ $objectToArray: "$updateDescription.updatedFields" }, []] }
+                }
+            },
+            {
                 $match: {
                     $or: [
                         { operationType: 'insert' },
-                        { 
-                            'operationType': 'update',
-                            'updateDescription.updatedFields.status': { $in: ['assigned', 'new'] }
-                        }
+                        { 'updateDescription.updatedFields.status': { $in: ['assigned', 'new', 'in_progress', 'on_hold', 'resolved'] } },
+                        { "updatedFieldKeys.k": { $regex: /^subscribers/ } }
                     ]
                 }
             }
         ];
 
-        const changeStream = IncidentDocket.watch(pipeline, { fullDocument: 'updateLookup' });
+        const changeStream = IncidentDocket.watch(pipeline, {
+            fullDocument: 'updateLookup',
+            fullDocumentBeforeChange: 'whenAvailable'
+        });
 
         changeStream.on('change', (change) => {
+
+            console.log('**************',change.operationType,JSON.stringify(change.updateDescription))
             if (change.operationType === 'insert') {
                 handleNewDocket(change.fullDocument);
-            } else if (change.operationType === 'update') {
-                const status = change.updateDescription.updatedFields.status;
-                if (status === 'assigned') {
-                    handleAssignedDocket(change.documentKey._id);
-                } else if (status === 'new') {
-                    IncidentDocket.findById(change.documentKey._id).then(docket => {
-                       
-                        if (docket) handleNewDocket(docket);
-                    });
+                return;
+            }
+
+            if (change.operationType === 'update') {
+                const updatedFields = change.updateDescription.updatedFields;
+                
+                if (updatedFields.status) {
+                    if (updatedFields.status === 'assigned') {
+                        handleAssignedDocket(change.documentKey._id);
+                    } else if (updatedFields.status === 'new') {
+                       /* IncidentDocket.findById(change.documentKey._id).then(docket => {
+                            if (docket) handleNewDocket(docket);
+                        });*/
+                    } else if (updatedFields.status === 'in_progress') {
+                        handleInProgressDocket(change.documentKey._id);
+                    } else if (updatedFields.status === 'on_hold') {
+                        handleOnHoldDocket(change.documentKey._id);
+                    } else if (updatedFields.status === 'resolved') {
+                        handleResolvedDocket(change.documentKey._id);
+                    }
+                }
+                
+                const subscriberAdded = Object.keys(updatedFields).some(key => /^subscribers\.\d+$/.test(key));
+                if (subscriberAdded) {
+                    handleNewSubscriber(change);
                 }
             }
         });

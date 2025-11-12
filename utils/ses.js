@@ -158,6 +158,36 @@ const sendNeighborAssignedDocketEmail = async (docketData) => {
     return sendEmail([email], subject, html);
 };
 
+const getInProgressDocketHtmlTemplate = (docketData) => {
+    const { docketId, description, address, logoUrl, companyName, companyWeb, nameProfile, observation } = docketData;
+    return `
+        <!DOCTYPE html><html><head><style>${getBaseEmailStyles()}</style></head><body>
+            <div class="container">
+                <div class="header">${logoUrl ? `<a href="${companyWeb}" target="_blank"><img src="${logoUrl}" alt="${companyName}"></a>` : ''}</div>
+                <div class="content">
+                    <h2 style="text-align: center; color: #333;">Tu Legajo #${docketId} está En Progreso</h2>
+                    <p>Hola ${nameProfile || ''},</p>
+                    <p>Te informamos que tu legajo ha sido actualizado al estado "En Progreso". Nuestro equipo está trabajando en tu solicitud.</p>
+                    <ul>
+                        <li><strong>Descripción:</strong> ${description}</li>
+                        ${observation ? `<li><strong>Observación:</strong> ${observation}</li>` : ''}
+                    </ul>
+                    <p>Recibirás una nueva notificación cuando el estado de tu legajo vuelva a cambiar. Gracias por tu paciencia.</p>
+                </div>
+                <div class="footer"><p>Este es un email automático, por favor no respondas a este mensaje.</p></div>
+            </div>
+        </body></html>
+    `;
+};
+
+const sendInProgressDocketEmail = async (docketData) => {
+    const { company, email } = docketData;
+    const companyInfo = await getCompanyDataForEmail(company);
+    const html = getInProgressDocketHtmlTemplate({ ...docketData, ...companyInfo });
+    const subject = `Legajo #${docketData.docketId} está En Progreso`;
+    return sendEmail([email], subject, html);
+};
+
 const getNewProfileHtmlTemplate = (profileData) => {
     const { name, lastname, dni, password, logoUrl, companyName, companyWeb } = profileData;
     return `
@@ -188,4 +218,90 @@ const sendNewProfileEmail = async (profileData) => {
     return sendEmail([email], subject, html);
 };
 
-module.exports = { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewProfileEmail };
+const getNewSubscriberHtmlTemplate = (docketData) => {
+    const { docketId, address, logoUrl, companyName, companyWeb, nameProfile } = docketData;
+    return `
+        <!DOCTYPE html><html><head><style>${getBaseEmailStyles()}</style></head><body>
+            <div class="container">
+                <div class="header">${logoUrl ? `<a href="${companyWeb}" target="_blank"><img src="${logoUrl}" alt="${companyName}"></a>` : ''}</div>
+                <div class="content">
+                    <h2 style="text-align: center; color: #333;">Suscripción al Reclamo #${docketId}</h2>
+                    <p>Hola ${nameProfile || ''},</p>
+                    <p>Te has suscripto al reclamo <strong>#${docketId}</strong>, con referencia en la dirección: <strong>${address || 'No especificada'}</strong>.</p>
+                    <p>A partir de ahora, recibirás notificaciones por email cada vez que haya un cambio de estado en el mismo.</p>
+                    <p>Gracias por tu colaboración.</p>
+                </div>
+                <div class="footer"><p>Este es un email automático, por favor no respondas a este mensaje.</p></div>
+            </div>
+        </body></html>
+    `;
+};
+
+const sendNewSubscriberEmail = async (docketData) => {
+    const { company, email } = docketData;
+    const companyInfo = await getCompanyDataForEmail(company);
+    const html = getNewSubscriberHtmlTemplate({ ...docketData, ...companyInfo });
+    const subject = `Suscripción al Reclamo #${docketData.docketId}`;
+    return sendEmail([email], subject, html);
+};
+
+const getOnHoldDocketHtmlTemplate = (docketData) => {
+    const { docketId, description, logoUrl, companyName, companyWeb, nameProfile, observation } = docketData;
+    return `
+        <!DOCTYPE html><html><head><style>${getBaseEmailStyles()}</style></head><body>
+            <div class="container">
+                <div class="header">${logoUrl ? `<a href="${companyWeb}" target="_blank"><img src="${logoUrl}" alt="${companyName}"></a>` : ''}</div>
+                <div class="content">
+                    <h2 style="text-align: center; color: #333;">El Legajo #${docketId} ha sido Observado</h2>
+                    <p>Hola ${nameProfile || ''},</p>
+                    <p>Esta observación podría requerir una acción de tu parte (como completar documentación, revisar información faltante, etc.)</p>
+                    <ul>
+                        ${observation ? `<li><strong>Observación:</strong> ${observation}</li>` : ''}
+                    </ul>
+                    <p>Recibirás una nueva notificación cuando el estado de tu legajo vuelva a cambiar. Gracias por tu paciencia.</p>
+                </div>
+                <div class="footer"><p>Este es un email automático, por favor no respondas a este mensaje.</p></div>
+            </div>
+        </body></html>
+    `;
+};
+
+const sendOnHoldDocketEmail = async (docketData) => {
+    const { company, email } = docketData;
+    const companyInfo = await getCompanyDataForEmail(company);
+    const html = getOnHoldDocketHtmlTemplate({ ...docketData, ...companyInfo });
+    const subject = `Legajo #${docketData.docketId} se encuentra observado`;
+    return sendEmail([email], subject, html);
+};
+
+const getResolvedDocketHtmlTemplate = (docketData) => {
+    const { docketId, description, logoUrl, companyName, companyWeb, nameProfile, observation } = docketData;
+    return `
+        <!DOCTYPE html><html><head><style>${getBaseEmailStyles()}</style></head><body>
+            <div class="container">
+                <div class="header">${logoUrl ? `<a href="${companyWeb}" target="_blank"><img src="${logoUrl}" alt="${companyName}"></a>` : ''}</div>
+                <div class="content">
+                    <h2 style="text-align: center; color: #333;">Tu Legajo #${docketId} ha sido Resuelto</h2>
+                    <p>Hola ${nameProfile || ''},</p>
+                    <p>Te informamos que tu legajo ha sido resuelto.</p>
+                    <ul>
+                        <li><strong>Descripción:</strong> ${description}</li>
+                        ${observation ? `<li><strong>Observación:</strong> ${observation}</li>` : ''}
+                    </ul>
+                    <p>Gracias por tu colaboración.</p>
+                </div>
+                <div class="footer"><p>Este es un email automático, por favor no respondas a este mensaje.</p></div>
+            </div>
+        </body></html>
+    `;
+};
+
+const sendResolvedDocketEmail = async (docketData) => {
+    const { company, email } = docketData;
+    const companyInfo = await getCompanyDataForEmail(company);
+    const html = getResolvedDocketHtmlTemplate({ ...docketData, ...companyInfo });
+    const subject = `Tu Legajo #${docketData.docketId} ha sido Resuelto`;
+    return sendEmail([email], subject, html);
+};
+
+module.exports = { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewProfileEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail };

@@ -91,6 +91,142 @@ router.get('/docket/name', auth, async (req, res) => {
     }
 });
 
+router.get('/docket/subscriber', auth, async (req, res) => {
+    try {
+        const { id } = req.query;
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de legajo no válido o no proporcionado.' });
+        }
+
+        const docket = await Docket.findOne({ _id: id, company: companyId })
+            .populate({
+                path: 'subscribers.profile',
+                select: 'name last email'
+            });
+
+        if (!docket || !docket.subscribers || docket.subscribers.length === 0) {
+            return res.json([]);
+        }
+
+        const subscribersList = docket.subscribers.map(sub => {
+            // Case 1: Subscriber is a registered profile and was populated
+            if (sub.profile && typeof sub.profile === 'object') {
+                let displayName = sub.profile.email; // Default to email
+                if (sub.profile.name || sub.profile.last) {
+                    displayName = `${sub.profile.name || ''} ${sub.profile.last || ''}`.trim();
+                }
+                return {
+                    _id: sub.profile._id,
+                    name: displayName
+                };
+            }
+            
+            // Case 2: Subscriber is just an email string
+            if (sub.email && typeof sub.email === 'string') {
+                return {
+                    _id: null, // No profile ID available
+                    name: sub.email
+                };
+            }
+        
+            // If the element is malformed, return null
+            return null;
+        }).filter(Boolean); // Filter out any null entries
+
+        res.json(subscribersList);
+
+    } catch (error) {
+        console.error("Error fetching docket subscribers:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
+router.post('/docket/subscriber', [auth, [
+    check('id', 'ID de legajo no válido').isMongoId(),
+]], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+        const { id, profile, email } = req.body;
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        let updateQuery;
+        let findQuery = { _id: id, company: companyId };
+
+        if (profile && profile._id) {
+            if (!mongoose.Types.ObjectId.isValid(profile._id)) {
+                return res.status(400).json({ msg: 'ID de perfil no válido.' });
+            }
+            const profileId = new mongoose.Types.ObjectId(profile._id);
+            updateQuery = { $addToSet: { subscribers: { profile: profileId } } };
+        } else if (email) {
+            if (!/^\S+@\S+\.\S+$/.test(email)) {
+                 return res.status(400).json({ msg: 'Formato de email no válido.' });
+            }
+            updateQuery = { $addToSet: { subscribers: { email: email } } };
+        } else {
+            return res.status(400).json({ msg: 'Debe proporcionar un perfil o un email para suscribir.' });
+        }
+
+        const updatedDocket = await Docket.findOneAndUpdate(
+            findQuery,
+            updateQuery,
+            { new: true }
+        );
+
+        if (!updatedDocket) {
+            return res.status(404).json({ msg: 'Legajo no encontrado o no tiene permisos.' });
+        }
+
+        res.json({ id: updatedDocket._id, docketId:updatedDocket.docketId });
+
+    } catch (error) {
+        console.error("Error adding docket subscriber:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
+router.delete('/docket/:id/subscriber/:subscriber', auth, async (req, res) => {
+    const { id, subscriber } = req.params;
+    const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ msg: 'ID de legajo no válido.' });
+    }
+
+    try {
+        let pullQuery;
+
+        if (mongoose.Types.ObjectId.isValid(subscriber)) {
+            const profileId = new mongoose.Types.ObjectId(subscriber);
+            pullQuery = { $pull: { subscribers: { profile: profileId } } };
+        } else {
+            pullQuery = { $pull: { subscribers: { email: subscriber } } };
+        }
+
+        const updatedDocket = await Docket.findOneAndUpdate(
+            { _id: id, company: companyId },
+            pullQuery,
+            { new: true }
+        );
+
+        if (!updatedDocket) {
+            return res.status(404).json({ msg: 'Legajo no encontrado.' });
+        }
+
+        res.json({ id: updatedDocket._id });
+
+    } catch (error) {
+        console.error("Error deleting docket subscriber:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
 
 router.get('/docket/name/expand', auth, async (req, res) => {
 
@@ -721,7 +857,8 @@ router.post('/docket/search', auth, async (req, res) => {
                             in: '$$initialSentiment.sentiment'
                             }
                         }
-          }
+          },
+          subscribers: { $size: { $ifNull: ['$subscribers', []] } }
         }
       },
       {
@@ -800,9 +937,6 @@ router.post('/docket', [auth, [
         sentiments
     } = req.body;
 
-    console.log(JSON.stringify(req.body))
-      
-
     try {
         const companyId = new mongoose.Types.ObjectId(req.user.company);
 
@@ -811,6 +945,14 @@ router.post('/docket', [auth, [
         const sourceId = sourceObj.value;
         let docket_type_predicted;
         let initialSentiment;
+
+        let address = null;
+        let location = null;
+
+        if (details && details.address && details.address_location) {
+            address = details.address;
+            location = details.address_location;
+        }
 
 
         //docket preddict
@@ -883,7 +1025,7 @@ router.post('/docket', [auth, [
         // Map docket_area to an array of ObjectIds if provided
         const docketAreaIds = docket_area ? docket_area.map(area => new mongoose.Types.ObjectId(area._id)) : [];
 
-        const location = details && details.address_location ? details.address_location : null;
+       // const location = details && details.address_location ? details.address_location : null;
 
         const newDocket = new Docket({
             company: companyId,
@@ -1378,13 +1520,15 @@ router.patch('/docket/update/status/:id', [auth, [
             'deleted': 'Eliminado'
         };
 
-        const oldStatus = originalDocket.status;
+       // const oldStatus = originalDocket.status;
       //  const translatedOldStatus = statusTranslations[oldStatus] || oldStatus;
-        const translatedNewStatus = statusTranslations[newStatus] || newStatus;
 
-        let historyContent = `Cambio de estado: '${translatedNewStatus}'.`;
+        let historyContent = "";
         if (observation) {
-            historyContent += ` Observación: ${observation}`;
+            historyContent = observation;
+        }else{
+            const translatedNewStatus = statusTranslations[newStatus] || newStatus;
+            historyContent  = `Cambio de estado: '${translatedNewStatus}'.`;
         }
 
         const newHistory = new DocketHistory({
