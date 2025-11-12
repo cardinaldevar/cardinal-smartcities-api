@@ -934,7 +934,8 @@ router.post('/docket', [auth, [
         details,
         address,
         docket_type_stage,
-        sentiments
+        sentiments,
+        status
     } = req.body;
 
     try {
@@ -949,11 +950,11 @@ router.post('/docket', [auth, [
         let address = null;
         let location = null;
 
-        if (details && details.address && details.address_location) {
-            address = details.address;
-            location = details.address_location;
+        if (details && details.address.value && details.address.location) {
+            address = details.address.value;
+            location = details.address.location;
         }
-        console.log('details',JSON.stringify(details))
+        console.log('req.user',JSON.stringify(req.user))
 
         //docket preddict
         //EVALUAR EN QUE ESTADOS SE DEBE HACER EL PREDICT Y SENTIMENT
@@ -1038,10 +1039,23 @@ router.post('/docket', [auth, [
             address,
             location,
             sentiments: [initialSentiment],
-            docket_type_predicted
+            docket_type_predicted,
+            status
         });
 
         await newDocket.save();
+
+        //agregar history
+        const initialHistoryEntry = new DocketHistory({
+            docket: newDocket._id,      
+            user: req.user.id, 
+            userModel: 'users',
+            status,        
+            content: 'Legajo iniciado'
+          //  observation: `Categoría predicha: ${prediction.name}` // Opcional: una nota interna
+        });
+        
+        await initialHistoryEntry.save();
 
         res.status(201).json(newDocket.docketId);
 

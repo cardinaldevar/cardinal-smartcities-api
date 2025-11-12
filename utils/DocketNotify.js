@@ -98,14 +98,16 @@ const handleNewDocket = async (docket) => {
 
 const handleAssignedDocket = async (docketId) => {
     try {
-        const docket = await IncidentDocket.findById(docketId).populate('docket_area').populate('profile');
+        const docket = await IncidentDocket.findById(docketId)
+        //.populate('docket_area')
+        .populate('profile');
         if (!docket) {
             console.error(`Docket ${docketId} not found for 'assigned' notification.`);
             return;
         }
 
         // --- 1. Internal Notification Logic (to Areas) ---
-        const internalEmailPromise = (async () => {
+       /* const internalEmailPromise = (async () => {
             const areasToNotify = docket.docket_area.filter(area => area.notify && area.emails && area.emails.length > 0);
             if (areasToNotify.length > 0) {
                 const emailSet = new Set(areasToNotify.flatMap(area => area.emails));
@@ -120,7 +122,7 @@ const handleAssignedDocket = async (docketId) => {
                     });
                 }
             }
-        })();
+        })();*/
 
         // --- 2. Neighbor Notification Logic (to Profile) ---
         const neighborEmailPromise = (async () => {
@@ -137,7 +139,8 @@ const handleAssignedDocket = async (docketId) => {
         })();
 
         // --- 3. Run both in parallel ---
-        await Promise.all([internalEmailPromise, neighborEmailPromise]);
+        //await Promise.all([internalEmailPromise, neighborEmailPromise]);
+        await Promise.all([neighborEmailPromise]);
 
     } catch (error) {
         console.error(`Error handling 'assigned' docket notification for ${docketId}:`, error);
@@ -222,10 +225,10 @@ const handleAreaNotify = async (change) => {
 
         if (newAreas.length === 0) return;
 
-       /* const oldAreaIds = new Set(oldAreas.map(id => id.toString()));
+        const oldAreaIds = new Set(oldAreas.map(id => id.toString()));
         const newlyAddedAreaIds = newAreas.filter(id => !oldAreaIds.has(id.toString()));
 
-        if (newlyAddedAreaIds.length === 0) return;*/
+        if (newlyAddedAreaIds.length === 0) return;
 
         const areasToNotify = await IncidentDocketArea.find({
             _id: { $in: newlyAddedAreaIds },
@@ -293,6 +296,14 @@ const initializeDocketNotifier = () => {
                 if (updatedFields.status) {
                     if (updatedFields.status === 'assigned') {
                         handleAssignedDocket(change.documentKey._id);
+
+                        if (updatedFields.docket_area) {
+                            const beforeDoc = change.fullDocumentBeforeChange;
+                            if (!beforeDoc || !beforeDoc.docket_area || beforeDoc.docket_area.length === 0) {
+                                handleAreaNotify(change);
+                            }
+                        }
+
                     } else if (updatedFields.status === 'new') {
                        /* IncidentDocket.findById(change.documentKey._id).then(docket => {
                             if (docket) handleNewDocket(docket);
@@ -311,13 +322,6 @@ const initializeDocketNotifier = () => {
                     handleNewSubscriber(change);
                 }
 
-                // Notify on new area assignment
-                if (updatedFields.docket_area) {
-                    const beforeDoc = change.fullDocumentBeforeChange;
-                    if (!beforeDoc || !beforeDoc.docket_area || beforeDoc.docket_area.length === 0) {
-                        handleAreaNotify(change);
-                    }
-                }
             }
         });
 

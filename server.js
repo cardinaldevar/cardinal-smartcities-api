@@ -21,15 +21,16 @@ const AlertJob = require('./utils/AlertJob');
 const initializeDocketNotifier = require('./utils/DocketNotify');
 
 connectDB();
+
 if(process.env.NODE_ENV === 'production'){ 
-//  initializeDocketNotifier();
+  initializeDocketNotifier();
   AlertJob();
 }
 
 //global = connectDB();
 //console.log('GLOBAL',global); //connect DB
 
-var whitelist = ['https://ts-landing.cardinal.dev','https://gemini.cardinal.dev','https://admin.cardinal.dev','https://b763b788b690.ngrok-free.app','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com/','http://localhost:3000','http://localhost:3001','http://localhost:4000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:3000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:5000','http://www.cardinaltigre.com','https://cardinaltigre.com','https://www.cardinaltigre.com','http://api.cardinaltigre.com','https://api.cardinaltigre.com','https://urbaser.cardinal.dev']
+var whitelist = ['https://ts-landing.cardinal.dev','https://gemini.cardinal.dev','https://admin.cardinal.dev','https://b763b788b690.ngrok-free.app','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com/','http://localhost:3000','http://localhost:3001','http://localhost:8080','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:3000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:5000','http://www.cardinaltigre.com','https://cardinaltigre.com','https://www.cardinaltigre.com','http://api.cardinaltigre.com','https://api.cardinaltigre.com','https://urbaser.cardinal.dev']
 
 const corsOptions = {
 

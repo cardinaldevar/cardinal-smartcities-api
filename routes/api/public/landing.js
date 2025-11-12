@@ -322,11 +322,10 @@ router.post('/docket', [
         let location = null;
 
         if (details && details.address && details.address.value) {
-            address = details.address.value.address;
-            location = details.address.value.location;
+            address = details.address.value;
+            location = details.address.location;
         }
-        
-        console.log(JSON.stringify(data))
+
         if (suscribeDocket === true && docketId) {
             const profileId = req.user.id;
 
@@ -483,8 +482,6 @@ router.post('/docket', [
         // 3. Guardar el registro de historial
         await initialHistoryEntry.save();
 
- 
-        
 
         res.status(201).json({
             msg: 'Legajo creado exitosamente',

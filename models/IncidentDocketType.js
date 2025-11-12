@@ -91,7 +91,7 @@ DocketTypeSchema.pre('save', async function(next) {
             textParts.push(...doc.keywords);
         }
 
-        doc.searchText = textParts.join(' ').toLowerCase();
+        doc.searchText = textParts.map(part => part.normalize('NFD').replace(/[\u0300-\u036f]/g, '')).join(' ').toLowerCase();
     }
 
 
