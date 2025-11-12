@@ -953,7 +953,7 @@ router.post('/docket', [auth, [
             address = details.address;
             location = details.address_location;
         }
-
+        console.log('details',JSON.stringify(details))
 
         //docket preddict
         //EVALUAR EN QUE ESTADOS SE DEBE HACER EL PREDICT Y SENTIMENT

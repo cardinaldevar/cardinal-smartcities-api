@@ -325,6 +325,7 @@ router.post('/docket', [
             address = details.address.value.address;
             location = details.address.value.location;
         }
+        
         console.log(JSON.stringify(data))
         if (suscribeDocket === true && docketId) {
             const profileId = req.user.id;

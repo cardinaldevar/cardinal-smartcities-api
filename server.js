@@ -22,7 +22,7 @@ const initializeDocketNotifier = require('./utils/DocketNotify');
 
 connectDB();
 if(process.env.NODE_ENV === 'production'){ 
-  initializeDocketNotifier();
+//  initializeDocketNotifier();
   AlertJob();
 }
 

@@ -2,6 +2,7 @@ const IncidentDocket = require('../models/IncidentDocket');
 const IncidentProfile = require('../models/IncidentProfile');
 const DocketType = require('../models/IncidentDocketType');
 const IncidentDocketHistory = require('../models/IncidentDocketHistory');
+const IncidentDocketArea = require('../models/IncidentDocketArea');
 const { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail } = require('./ses');
 
 const handleNewSubscriber = async (change) => {
@@ -213,6 +214,44 @@ const handleResolvedDocket = (docketId) => {
     handleStatusChange(docketId, 'resolved', 'Resuelto', sendResolvedDocketEmail);
 };
 
+const handleAreaNotify = async (change) => {
+    try {
+        const docket = change.fullDocument;
+        const oldAreas = change.fullDocumentBeforeChange?.docket_area || [];
+        const newAreas = docket.docket_area || [];
+
+        if (newAreas.length === 0) return;
+
+       /* const oldAreaIds = new Set(oldAreas.map(id => id.toString()));
+        const newlyAddedAreaIds = newAreas.filter(id => !oldAreaIds.has(id.toString()));
+
+        if (newlyAddedAreaIds.length === 0) return;*/
+
+        const areasToNotify = await IncidentDocketArea.find({
+            _id: { $in: newlyAddedAreaIds },
+            notify: true,
+            'emails.0': { $exists: true }
+        }).select('emails');
+
+        if (areasToNotify.length === 0) return;
+
+        const allEmails = areasToNotify.flatMap(area => area.emails);
+        const uniqueEmails = [...new Set(allEmails)];
+        console.log('allEmails',allEmails)
+        if (uniqueEmails.length > 0) {
+            console.log(`📧  Docket [${docket.docketId}] assigned to new area. Triggering INTERNAL email to ${uniqueEmails.length} address(es).`);
+            await sendInternalAssignedDocketEmail({
+                emails: uniqueEmails,
+                docketId: docket.docketId,
+                description: docket.description,
+                company: docket.company
+            });
+        }
+    } catch (error) {
+        console.error(`Error handling area assignment notification for docket ${change.documentKey._id}:`, error);
+    }
+};
+
 const initializeDocketNotifier = () => {
     console.log('🔔 Docket Notifier Initialized. Watching for changes...');
 
@@ -228,7 +267,8 @@ const initializeDocketNotifier = () => {
                     $or: [
                         { operationType: 'insert' },
                         { 'updateDescription.updatedFields.status': { $in: ['assigned', 'new', 'in_progress', 'on_hold', 'resolved'] } },
-                        { "updatedFieldKeys.k": { $regex: /^subscribers/ } }
+                        { "updatedFieldKeys.k": { $regex: /^subscribers/ } },
+                        { 'updateDescription.updatedFields.docket_area': { $exists: true } }
                     ]
                 }
             }
@@ -269,6 +309,14 @@ const initializeDocketNotifier = () => {
                 const subscriberAdded = Object.keys(updatedFields).some(key => /^subscribers\.\d+$/.test(key));
                 if (subscriberAdded) {
                     handleNewSubscriber(change);
+                }
+
+                // Notify on new area assignment
+                if (updatedFields.docket_area) {
+                    const beforeDoc = change.fullDocumentBeforeChange;
+                    if (!beforeDoc || !beforeDoc.docket_area || beforeDoc.docket_area.length === 0) {
+                        handleAreaNotify(change);
+                    }
                 }
             }
         });
