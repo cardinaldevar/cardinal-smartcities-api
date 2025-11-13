@@ -27,6 +27,7 @@ const DocketHistorySchema = new Schema({
         'assigned',
         'in_progress',
         'reassigned',
+        'returned',
         'on_hold',
         'resolved', 
         'closed',   
@@ -44,8 +45,11 @@ const DocketHistorySchema = new Schema({
         trim: true
     },
     files: [{
-        filename: { type: String, required: true },
-        mimeType: { type: String }
+        url: { type: String },
+        key: { type: String},
+        originalName: {  type: String,  required: true  },
+        fileType: {  type: String },
+        fileSize: { type: Number }
     }]
 }, {
     timestamps: { createdAt: true, updatedAt: false }

@@ -87,6 +87,7 @@ const IncidentDocketSchema = new Schema({
         'in_progress',
         'reassigned',
         'on_hold',
+        'returned',
         'resolved', 
         'closed',   
         'cancelled',

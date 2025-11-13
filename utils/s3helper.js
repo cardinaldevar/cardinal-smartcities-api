@@ -19,7 +19,7 @@ const uploadFileToS3 = async (file, bucketName, folderName = null, options = {})
 
   const uniqueFileName = `${nanoid()}-${file.originalname.replace(/\s/g, '_')}`;
   const fullKey = folderName ? `${folderName}/${uniqueFileName}` : uniqueFileName;
-
+    console.log('fullKey',fullKey)
   let bufferToUpload = file.buffer;
   let finalMimeType = file.mimetype;
 

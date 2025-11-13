@@ -13,10 +13,12 @@ const moment = require('moment-timezone');
 const https = require('https');
 const mongoose = require('mongoose');
 const axios = require('axios');
-const { getSignedUrlForFile } = require('../../utils/s3helper');
+const { getSignedUrlForFile, uploadFileToS3 } = require('../../utils/s3helper');
 const bcrypt = require('bcryptjs');
 const randtoken = require('rand-token');
 const { sendNewProfileEmail } = require('../../utils/ses');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
 
 router.get('/docket/name', auth, async (req, res) => {
 
@@ -1114,7 +1116,7 @@ router.post('/docket/predict/', auth, async (req, res) => {
                   name:docketTypeInfo.name,
                   parent: docketTypeInfo.parent?.name || null,
                   fields:docketTypeInfo.fields,
-                  docket_area: docketTypeInfo.docket_area // Added this
+                  docket_area: docketTypeInfo.docket_area ? docketTypeInfo.docket_area : []
               },
               sentiment: predictionPayload.sentiment
           };
@@ -1497,9 +1499,9 @@ router.patch('/docket/updatearea/:id', auth, async (req, res) => {
   }
 });
 
-router.patch('/docket/update/status/:id', [auth, [
+router.patch('/docket/update/status/:id', auth, upload.single('file'), [
     check('status', 'El estado es requerido').not().isEmpty(),
-]], async (req, res) => {
+], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
@@ -1514,11 +1516,22 @@ router.patch('/docket/update/status/:id', [auth, [
         }
 
         const companyId = new mongoose.Types.ObjectId(req.user.company);
-
         const originalDocket = await Docket.findOne({ _id: id, company: companyId });
 
         if (!originalDocket) {
             return res.status(404).json({ msg: 'Legajo no encontrado o no tiene permisos para modificarlo.' });
+        }
+
+        // Handle file upload
+        let fileData = null;
+        if (req.file) {
+            const bucketName = process.env.S3_BUCKET_INCIDENT;
+            if (!bucketName) {
+                console.error("S3_BUCKET_INCIDENT environment variable not set.");
+                return res.status(500).send('Error de configuración del servidor.');
+            }
+            // The uploadFileToS3 function returns an object that matches the history schema
+            fileData = await uploadFileToS3(req.file, bucketName,'docket');
         }
 
         const statusTranslations = {
@@ -1534,13 +1547,10 @@ router.patch('/docket/update/status/:id', [auth, [
             'deleted': 'Eliminado'
         };
 
-       // const oldStatus = originalDocket.status;
-      //  const translatedOldStatus = statusTranslations[oldStatus] || oldStatus;
-
         let historyContent = "";
         if (observation) {
             historyContent = observation;
-        }else{
+        } else {
             const translatedNewStatus = statusTranslations[newStatus] || newStatus;
             historyContent  = `Cambio de estado: '${translatedNewStatus}'.`;
         }
@@ -1550,7 +1560,8 @@ router.patch('/docket/update/status/:id', [auth, [
             user: req.user.id,
             userModel: 'users',
             status: newStatus,
-            content: historyContent
+            content: historyContent,
+            files: fileData ? [fileData] : []
         });
         await newHistory.save();
 
@@ -1589,6 +1600,9 @@ router.get('/docket/detail/:id', auth, async (req, res) => {
       .populate('user', 'name last');
 
     // --- 3. Combinar los resultados ---
+    if (!docket) {
+        return res.status(404).json({ msg: 'Legajo no encontrado.' });
+    }
     const docketObject = docket.toObject();
 
     // 1. Define tu bucket (idealmente desde variables de entorno)
@@ -1616,8 +1630,31 @@ router.get('/docket/detail/:id', auth, async (req, res) => {
     }
     // --- FIN: NUEVO BLOQUE PARA PROCESAR ARCHIVOS S3 ---
 
-    // Añadimos el array de historiales al objeto
-    docketObject.history = history;
+    // --- NUEVO BLOQUE PARA PROCESAR ARCHIVOS DEL HISTORIAL ---
+    if (history && history.length > 0 && BUCKET_NAME) {
+        docketObject.history = await Promise.all(history.map(async (entry) => {
+            const entryObject = entry.toObject();
+            if (entryObject.files && entryObject.files.length > 0) {
+                entryObject.files = await Promise.all(
+                    entryObject.files.map(async (file) => {
+                        if (file.key) {
+                            try {
+                                const signedUrl = await getSignedUrlForFile(file.key, BUCKET_NAME);
+                                return { ...file, url: signedUrl };
+                            } catch (urlError) {
+                                console.error(`Failed to get signed URL for history file key ${file.key}:`, urlError);
+                                return { ...file, url: null }; // Return with null URL on error
+                            }
+                        }
+                        return file;
+                    })
+                );
+            }
+            return entryObject;
+        }));
+    } else {
+        docketObject.history = history;
+    }
     res.status(200).json(docketObject);
 
   } catch (error) {
