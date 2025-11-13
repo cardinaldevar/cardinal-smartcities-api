@@ -440,16 +440,10 @@ router.post('/docket', [
             }).sort({ createdAt: -1 }).select({ _id: 1, docketId: 1, description: 1, updatedAt: 1, address: 1 }).limit(3);
 
             //agregar un sort de createdAt en forma descendente
-
-            if (nearbyDocket) {
+            if (nearbyDocket.length >= 1) {
                 return res.status(409).json({
                     msg: 'Ya existe un legajo similar creado recientemente cerca de esta ubicación.',
-                    docketFound :nearbyDocket,
-                    /*
-                    docketId: nearbyDocket.docketId,
-                    description: nearbyDocket.description,
-                    _id: nearbyDocket._id,
-                    updatedAt: nearbyDocket.updatedAt*/
+                    docketFound :nearbyDocket
                 });
             }
         }
