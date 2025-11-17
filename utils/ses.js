@@ -304,4 +304,30 @@ const sendResolvedDocketEmail = async (docketData) => {
     return sendEmail([email], subject, html);
 };
 
-module.exports = { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewProfileEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail };
+const getNewPasswordHtmlTemplate = (resetData) => {
+    const { newPassword, logoUrl, companyName, companyWeb } = resetData;
+    return `
+        <!DOCTYPE html><html><head><style>${getBaseEmailStyles()}</style></head><body>
+            <div class="container">
+                <div class="header">${logoUrl ? `<a href="${companyWeb}" target="_blank"><img src="${logoUrl}" alt="${companyName}"></a>` : ''}</div>
+                <div class="content">
+                    <h2 style="text-align: center; color: #333;">Restablecimiento de Contraseña</h2>
+                    <p>Has solicitado restablecer tu contraseña. Se ha generado una nueva contraseña temporal para ti:</p>
+                    <p style="text-align: center; font-size: 1.2em; font-weight: bold; margin: 20px 0;">${newPassword}</p>
+                    <p>Te recomendamos iniciar sesión y cambiar esta contraseña por una de tu elección lo antes posible.</p>
+                </div>
+                <div class="footer"><p>Este es un email automático, por favor no respondas a este mensaje.</p></div>
+            </div>
+        </body></html>
+    `;
+};
+
+const sendNewPasswordEmail = async (resetData) => {
+    const { company, email, newPassword } = resetData;
+    const companyInfo = await getCompanyDataForEmail(company);
+    const html = getNewPasswordHtmlTemplate({ ...resetData, ...companyInfo });
+    const subject = `Tu nueva contraseña para ${companyInfo.companyName}`;
+    return sendEmail([email], subject, html);
+};
+
+module.exports = { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewProfileEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail, sendNewPasswordEmail };

@@ -232,6 +232,9 @@ app.use("/api/alert", require("./routes/api/alert"));
 app.use("/api/incident", require("./routes/api/incident"));
 //app.use("/api/import", require("./routes/api/IMPORTFLEET"));
 //app.use("/api/position", require("./routes/api/position"));
+
+//EXTERNAL SERVICES
+app.use("/api/incident/external", require("./routes/api/incident/external"));
 //LANDING SERVICES
 app.use("/api/public/landing", require("./routes/api/public/landing"));
 

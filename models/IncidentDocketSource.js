@@ -15,6 +15,10 @@ const DocketSourceSchema = new Schema({
         type: String,
         trim: true
     },
+    position: {
+        type: Number,
+        default: 0
+    },
     company: { type: Schema.Types.ObjectId, ref: 'company' },
     locked: { type: Boolean, default: false },
     status: { type: Number, default: 1}, //0 inactivo , 1 activo, 2 eliminado, 3 archivado

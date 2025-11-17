@@ -1,22 +1,22 @@
 const express = require('express');
 const router = express.Router();
-const auth = require('../../middleware/auth');
+const auth = require('../../../middleware/auth');
 const { check, validationResult } = require('express-validator');
-const Docket = require('../../models/IncidentDocket');
-const IncidentProfile = require('../../models/IncidentProfile');
-const DocketArea = require('../../models/IncidentDocketArea');
-const Zone = require('../../models/Zone');
-const DocketSource = require('../../models/IncidentDocketSource');
-const DocketType = require('../../models/IncidentDocketType');
-const DocketHistory = require('../../models/IncidentDocketHistory');
+const Docket = require('../../../models/IncidentDocket');
+const IncidentProfile = require('../../../models/IncidentProfile');
+const DocketArea = require('../../../models/IncidentDocketArea');
+const Zone = require('../../../models/Zone');
+const DocketSource = require('../../../models/IncidentDocketSource');
+const DocketType = require('../../../models/IncidentDocketType');
+const DocketHistory = require('../../../models/IncidentDocketHistory');
 const moment = require('moment-timezone');
 const https = require('https');
 const mongoose = require('mongoose');
 const axios = require('axios');
-const { getSignedUrlForFile, uploadFileToS3 } = require('../../utils/s3helper');
+const { getSignedUrlForFile, uploadFileToS3 } = require('../../../utils/s3helper');
 const bcrypt = require('bcryptjs');
 const randtoken = require('rand-token');
-const { sendNewProfileEmail } = require('../../utils/ses');
+const { sendNewProfileEmail } = require('../../../utils/ses');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -491,12 +491,11 @@ router.get('/profile', auth, async (req, res) => {
  */
 router.post('/profile', [auth, [
     check('name', 'El nombre es requerido').not().isEmpty(),
-    check('lastname', 'El apellido es requerido').not().isEmpty(),
+    check('last', 'El apellido es requerido').not().isEmpty(),
     check('dni', 'El DNI es requerido y debe ser numérico').isNumeric().not().isEmpty(),
     check('email', 'Por favor, incluye un email válido').isEmail(),
     check('gender', 'El género es requerido').not().isEmpty(),
-    check('birthDate', 'La fecha de nacimiento es requerida').optional().isISO8601().toDate(),
-   // check('transactionNumber', 'El número de trámite es requerido').optional().not().isEmpty(),
+    check('birth', 'La fecha de nacimiento es requerida').optional().isISO8601().toDate()
 ]], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -505,16 +504,17 @@ router.post('/profile', [auth, [
 
     const {
         name,
-        lastname,
+        last,
         dni,
         transactionNumber,
+        phone,
         email,
         gender,
-        birthDate,
+        birth,
+        notify
     } = req.body;
-
+    console.log(JSON.stringify(req.body))
     try {
-
 
         const companyId = new mongoose.Types.ObjectId(req.user.company);
         const genderForApi = gender === 'male' ? 'M' : gender === 'female' ? 'F' : '';
@@ -565,13 +565,15 @@ router.post('/profile', [auth, [
         const newProfile = new IncidentProfile({
             company: companyId,
             name,
-            last: lastname, 
+            last, 
             dni,
-            transactionNumber,
+            transactionNumber: transactionNumber || null,
             email,
+            phone,
             gender,
-            birth: birthDate, 
+            birth: birth, 
             isVerified, 
+            notify,
             status: 1,
             password: hashedPassword
         });
@@ -584,7 +586,7 @@ router.post('/profile', [auth, [
           await sendNewProfileEmail({
             email,
             name,
-            lastname,
+            lastname:last,
             dni,
             password, // The plain text password
             company: companyId
@@ -793,8 +795,8 @@ router.post('/docket/search', auth, async (req, res) => {
 
     if (startDate || endDate) {
         matchConditions.createdAt = {};
-        if (startDate) matchConditions.createdAt.$gte = new Date(startDate);
-        if (endDate) matchConditions.createdAt.$lte = new Date(endDate);
+        if (startDate) matchConditions.createdAt.$gte = moment(startDate).startOf('D').toDate();
+        if (endDate) matchConditions.createdAt.$lte = moment(endDate).endOf('D').toDate();
     }
 
     if (zone && zone.length > 0) {
@@ -1359,8 +1361,8 @@ router.post('/docket/map/search', auth, async (req, res) => {
           metadata: [{ $count: "totalDocs" }],
           data: [
             { $sort: sortOptions },    
-            { $skip: page * pageSize },
-            { $limit: pageSize }
+          //  { $skip: page * pageSize },
+           // { $limit: pageSize }
           ]
         }
       }
@@ -1510,7 +1512,7 @@ router.patch('/docket/update/status/:id', auth, upload.single('file'), [
     try {
         const { id } = req.params;
         const { status: newStatus, observation } = req.body;
-
+        
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({ msg: 'ID de legajo no válido.' });
         }
@@ -1540,6 +1542,7 @@ router.patch('/docket/update/status/:id', auth, upload.single('file'), [
             'in_progress': 'En Progreso',
             'reassigned': 'Reasignado',
             'on_hold': 'En Espera',
+            'partially_resolved':'Parcialmente Resuelto',
             'resolved': 'Resuelto',
             'closed': 'Cerrado',
             'cancelled': 'Cancelado',
@@ -1565,10 +1568,17 @@ router.patch('/docket/update/status/:id', auth, upload.single('file'), [
         });
         await newHistory.save();
 
-        originalDocket.status = newStatus;
-        const updatedDocket = await originalDocket.save();
+        if (newStatus === 'activity') {
+            // Only update the timestamp for 'activity' status
+            originalDocket.updatedAt = new Date();
+            await originalDocket.save();
+        } else {
+            // For any other status, update the status field and save
+            originalDocket.status = newStatus;
+            await originalDocket.save();
+        }
 
-        res.status(200).json(updatedDocket.docketId);
+        res.status(200).json(originalDocket.docketId);
 
     } catch (error) {
         console.error("Error al actualizar el estado del legajo:", error);
@@ -1593,7 +1603,7 @@ router.get('/docket/detail/:id', auth, async (req, res) => {
   .populate({ path: 'docket_type', select: 'name parent', as:'docket_type' })
   .populate({ path: 'docket_area', select: 'name', as:'docket_area' })
   .populate({ path: 'profile', select: 'name last email', as:'profile' })
-  .populate('source', 'name'); 
+  .populate('source', 'name label'); 
 
     const history = await DocketHistory.find({ docket: id })
       .sort({ createdAt: -1 })
@@ -1655,6 +1665,64 @@ router.get('/docket/detail/:id', auth, async (req, res) => {
     } else {
         docketObject.history = history;
     }
+    res.status(200).json(docketObject);
+
+  } catch (error) {
+    console.error("Error al obtener el detalle del docket:", error);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+router.get('/docket/:id', auth, async (req, res) => {
+    console.log(req.params)
+  try {
+    const { id } = req.params;
+    const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+    // Validación del ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ msg: 'ID de legajo no válido.' });
+    }
+
+    // Buscamos el legajo por su ID y el de la compañía para seguridad.
+    const docket = await Docket.findOne({ _id: id, company: companyId })
+  .populate({ path: 'docket_type', select: 'name parent', as:'docket_type' })
+  .populate({ path: 'docket_area', select: 'name', as:'docket_area' })
+  .populate({ path: 'profile', select: 'name last email', as:'profile' })
+  .populate('source', 'name label'); 
+
+    // --- 3. Combinar los resultados ---
+    if (!docket) {
+        return res.status(404).json({ msg: 'Legajo no encontrado.' });
+    }
+    const docketObject = docket.toObject();
+
+    // 1. Define tu bucket (idealmente desde variables de entorno)
+    const BUCKET_NAME = process.env.S3_BUCKET_INCIDENT; // Reemplaza con tu variable
+
+    // 2. Verifica si el campo 'files' existe y es un array con contenido
+    if (docketObject.details && Array.isArray(docketObject.details.files) && docketObject.details.files.length > 0) {
+        
+        // 3. Usa Promise.all para procesar todos los archivos en paralelo
+        const updatedFiles = await Promise.all(
+            docketObject.details.files.map(async (file) => {
+                // Si el archivo tiene una 'key', genera la URL firmada
+                if (file.key && BUCKET_NAME) {
+                    const signedUrl = await getSignedUrlForFile(file.key, BUCKET_NAME);
+                    // Devuelve una copia del objeto del archivo con la nueva URL
+                    return { ...file, url: signedUrl };
+                }
+                // Si no hay 'key', devuelve el archivo sin cambios
+                return file;
+            })
+        );
+        
+        // 4. Reemplaza el array de archivos original con el que tiene las URLs actualizadas
+        docketObject.details.files = updatedFiles;
+    }
+    // --- FIN: NUEVO BLOQUE PARA PROCESAR ARCHIVOS S3 ---
+
+    
     res.status(200).json(docketObject);
 
   } catch (error) {
@@ -2845,12 +2913,12 @@ router.get('/source', auth, async (req, res) => {
                 { company: companyId },
                 { company: null, locked: true }
             ]
-        }).select('_id name').sort({ name: 1 });
+        }).select('_id name label').sort({ position:1, name: 1 });
 
         // Format the response as requested
         const formattedSources = sources.map(source => ({
             value: source._id,
-            label: source.name
+            label: source.label
         }));
 
         res.json(formattedSources);

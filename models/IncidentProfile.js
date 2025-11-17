@@ -18,9 +18,9 @@ const IncidentProfileSchema = new Schema({
         unique: true,
         trim: true
     },
-    transactionNumber: { // numero de tramite renaper
+    transactionNumber: {
         type: String,
-        unique: true,
+        default:null,
         trim: true
     },
     email: {
@@ -68,6 +68,9 @@ const IncidentProfileSchema = new Schema({
         type: Date,
         default: Date.now
     },
+    lastConnect: {
+        type: Date
+    },
     pushToken: [
         {
             token: {
@@ -83,6 +86,10 @@ const IncidentProfileSchema = new Schema({
     searchText: {
         type: String,
         trim: true
+    },
+    notify: {
+        type: Boolean,
+        default: true
     }
 });
 

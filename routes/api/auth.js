@@ -12,9 +12,25 @@ const { getURLS3 } = require("../../utils/s3.js");
 const { check, validationResult } = require('express-validator');
 const CoreSection = require('../../models/CoreSection');
 var randtoken = require('rand-token');
+const { nanoid } = require('nanoid');
+const { sendNewPasswordEmail } = require('../../utils/ses');
+const rateLimit = require('express-rate-limit');
+
+// Rate limiter for password reset
+const forgotPasswordLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 3,
+    message: 'Demasiadas solicitudes, intente en una hora.',
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req, res) => {
+      return req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    }
+});
 
 // Implement RefreshTokens
 var refreshTokens = {} 
+
 
 /**
  * Convierte una lista plana de secciones en un árbol jerárquico.
@@ -290,6 +306,54 @@ router.get('/me', auth, async (req,res) => {
         });
         
     } catch(err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// @route   POST api/auth/forgot-password
+// @desc    Forgot password for User - generates and emails a new password
+// @access  Public
+router.post('/forgot-password', [
+    forgotPasswordLimiter,
+    check('email', 'Please include a valid email').isEmail(),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+        const { email } = req.body;
+        const user = await User.findOne({ email });
+
+        if (user) {
+            // Check user status
+            if (user.status !== 1) {
+                return res.status(400).json({ errors: [{ msg: 'Usuario deshabilitado, contáctese con el administrador.' }] });
+            }
+
+            // Generate a new random password
+            const newPassword = nanoid(10);
+
+            // Hash the new password
+            const salt = await bcrypt.genSalt(10);
+            user.password = await bcrypt.hash(newPassword, salt);
+
+            await user.save();
+
+            // Send email with the new password
+            await sendNewPasswordEmail({
+                email: user.email,
+                newPassword: newPassword,
+                company: user.company
+            });
+        }
+
+        // Always return a success message to prevent user enumeration
+        res.json({ msg: 'Si existe una cuenta con ese correo electrónico, se ha enviado una nueva contraseña.' });
+
+    } catch (err) {
         console.error(err.message);
         res.status(500).send('Server Error');
     }

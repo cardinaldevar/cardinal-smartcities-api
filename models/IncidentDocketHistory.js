@@ -23,13 +23,15 @@ const DocketHistorySchema = new Schema({
         type: String,
         required: true,
         enum: [
-            'new',
+        'new',
         'assigned',
         'in_progress',
-        'reassigned',
+        'reassigned', //not used
         'returned',
         'on_hold',
+        'partially_resolved',
         'resolved', 
+        'activity',
         'closed',   
         'cancelled',
         'archived',
@@ -40,7 +42,7 @@ const DocketHistorySchema = new Schema({
         type: String,
         trim: true
     },
-    observation: {
+    content_private: {
         type: String,
         trim: true
     },
