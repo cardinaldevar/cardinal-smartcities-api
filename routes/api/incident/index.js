@@ -936,11 +936,12 @@ router.post('/docket', [auth, [
         description,
         source: sourceObj,
         details,
-        address,
+        //address,
         docket_type_stage,
         sentiments,
         status
     } = req.body;
+    //console.log(JSON.stringify(req.body))
 
     try {
         const companyId = new mongoose.Types.ObjectId(req.user.company);
@@ -954,18 +955,19 @@ router.post('/docket', [auth, [
         let address = null;
         let location = null;
 
-        if (details && details.address.value && details.address.location) {
+        if (details && details.address && details.address.value && details.address.location) {
             address = details.address.value;
             location = details.address.location;
         }
-        console.log('req.user',JSON.stringify(req.user))
+        //console.log('req.user',JSON.stringify(req.user))
 
         //docket preddict
         //EVALUAR EN QUE ESTADOS SE DEBE HACER EL PREDICT Y SENTIMENT
         if(docket_type_stage != 'predict'){
+
           const url = `${process.env.TIGRESIRVE_NLP_URL}/predict`;
           const response = await axios.post(url, { text: description });
-          console.log(response.data);
+          //console.log(response.data);
 
           if (response.data.categories && response.data.categories.length > 0) {
               const topPrediction = response.data.categories[0];
@@ -989,6 +991,7 @@ router.post('/docket', [auth, [
                 }
             };
           }
+
         }else{
 
           const sentimentData = sentiments[0];
