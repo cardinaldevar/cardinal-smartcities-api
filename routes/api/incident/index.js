@@ -493,9 +493,35 @@ router.post('/profile', [auth, [
     check('name', 'El nombre es requerido').not().isEmpty(),
     check('last', 'El apellido es requerido').not().isEmpty(),
     check('dni', 'El DNI es requerido y debe ser numérico').isNumeric().not().isEmpty(),
-   // check('email', 'Por favor, incluye un email válido').isEmail(),
-   // check('gender', 'El género es requerido').not().isEmpty(),
-   // check('birth', 'La fecha de nacimiento es requerida').optional().isISO8601().toDate()
+    check('address').optional().custom(value => {
+        if (!value || typeof value !== 'object') {
+            // This case should be handled by optional() but as a safeguard
+            return true; 
+        }
+        // If the address object is present but effectively empty, allow it.
+        if ((!value.value || value.value.trim() === '') && !value.location) {
+            return true;
+        }
+
+        if (!value.value || typeof value.value !== 'string' || value.value.trim() === '') {
+            throw new Error('El campo "address.value" es requerido y debe ser un string no vacío.');
+        }
+        if (!value.location || typeof value.location !== 'object') {
+            throw new Error('El campo "address.location" es requerido y debe ser un objeto.');
+        }
+        if (value.location.type !== 'Point') {
+            throw new Error('El campo "address.location.type" debe ser "Point".');
+        }
+        if (!Array.isArray(value.location.coordinates) || value.location.coordinates.length !== 2) {
+            throw new Error('El campo "address.location.coordinates" debe ser un array de 2 elementos.');
+        }
+        if (!value.location.coordinates.every(coord => typeof coord === 'number')) {
+            throw new Error('Las coordenadas en "address.location.coordinates" deben ser números.');
+        }
+        return true;
+    }),
+    check('floor', 'El piso debe ser un string').optional().isString(),
+    check('door', 'El departamento debe ser un string').optional().isString(),
 ]], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -508,19 +534,22 @@ router.post('/profile', [auth, [
         dni,
         transactionNumber,
         phone,
-        email: reqEmail, // Rename to avoid conflict with generated email
+        email: reqEmail,
         gender,
         birth,
+        address, // Destructure address
+        floor,   // Destructure floor
+        door,    // Destructure door
         notify
     } = req.body;
     console.log(JSON.stringify(req.body))
     try {
-        let email = reqEmail; // Use the renamed variable
+        let email = reqEmail;
 
         // Generate fictitious email if not provided
         if (!email || email.trim() === '') {
             const timestamp = Date.now();
-            email = `${dni}_${timestamp}@fakemail.com`;
+            email = `dni_${dni}_${timestamp}@ficticio.com`;
             console.log(`Generated fictitious email: ${email}`);
         }
 
@@ -584,7 +613,11 @@ router.post('/profile', [auth, [
             isVerified, 
             notify,
             status: 1,
-            password: hashedPassword
+            password: hashedPassword,
+            address: address ? address.value : undefined,
+            location: address ? address.location : undefined,
+            floor,
+            door
         });
 
        await newProfile.save();
