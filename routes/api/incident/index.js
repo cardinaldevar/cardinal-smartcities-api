@@ -583,6 +583,7 @@ router.post('/profile', [auth, [
        //add funcion send email
        if (email) {
         try {
+            /*
           await sendNewProfileEmail({
             email,
             name,
@@ -590,7 +591,8 @@ router.post('/profile', [auth, [
             dni,
             password, // The plain text password
             company: companyId
-          });
+          });*/
+
         } catch (emailError) {
           console.error("Error sending new profile email:", emailError);
           // Decide if you want to fail the request or just log the error
