@@ -493,9 +493,9 @@ router.post('/profile', [auth, [
     check('name', 'El nombre es requerido').not().isEmpty(),
     check('last', 'El apellido es requerido').not().isEmpty(),
     check('dni', 'El DNI es requerido y debe ser numérico').isNumeric().not().isEmpty(),
-    check('email', 'Por favor, incluye un email válido').isEmail(),
-    check('gender', 'El género es requerido').not().isEmpty(),
-    check('birth', 'La fecha de nacimiento es requerida').optional().isISO8601().toDate()
+   // check('email', 'Por favor, incluye un email válido').isEmail(),
+   // check('gender', 'El género es requerido').not().isEmpty(),
+   // check('birth', 'La fecha de nacimiento es requerida').optional().isISO8601().toDate()
 ]], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -508,16 +508,25 @@ router.post('/profile', [auth, [
         dni,
         transactionNumber,
         phone,
-        email,
+        email: reqEmail, // Rename to avoid conflict with generated email
         gender,
         birth,
         notify
     } = req.body;
     console.log(JSON.stringify(req.body))
     try {
+        let email = reqEmail; // Use the renamed variable
+
+        // Generate fictitious email if not provided
+        if (!email || email.trim() === '') {
+            const timestamp = Date.now();
+            email = `${dni}_${timestamp}@fakemail.com`;
+            console.log(`Generated fictitious email: ${email}`);
+        }
 
         const companyId = new mongoose.Types.ObjectId(req.user.company);
-        const genderForApi = gender === 'male' ? 'M' : gender === 'female' ? 'F' : '';
+        const finalGender = (gender && gender.trim() !== '') ? gender : undefined;
+        const genderForApi = finalGender === 'male' ? 'M' : finalGender === 'female' ? 'F' : '';
         const httpsAgent = new https.Agent({rejectUnauthorized: false});
         let isVerified = false;
 
@@ -570,7 +579,7 @@ router.post('/profile', [auth, [
             transactionNumber: transactionNumber || null,
             email,
             phone,
-            gender,
+            gender: finalGender,
             birth: birth, 
             isVerified, 
             notify,
