@@ -1081,12 +1081,12 @@ router.post('/docket/predict/', auth, async (req, res) => {
 
      const { description } = req.body;
 
-     console.log('/docket/predict/',description)
+     //console.log('/docket/predict/',description)
     
      const url = `${process.env.TIGRESIRVE_NLP_URL}/predict`;
         const response = await axios.post(url, { text:description });
         const predictionPayload = response.data;
-        console.log(predictionPayload)
+        //console.log(predictionPayload)
 
         //findone docket_type
         if (!predictionPayload.categories || predictionPayload.categories.length === 0) { return res.status(500).json({ error: 'La API de predicción no devolvió categorías.' }); }
@@ -1113,8 +1113,6 @@ router.post('/docket/predict/', auth, async (req, res) => {
                 parent: area.parent ? area.parent.name : null
             }));
         }
-
-        console.log(docketTypeInfo?.docket_area)
 
         const finalResponse = {
               prediction: {...topPrediction,
@@ -1402,6 +1400,7 @@ router.patch('/docket/updatetype/:id', auth, async (req, res) => {
       return res.status(400).json({ msg: 'Uno o más IDs proporcionados no son válidos.' });
     }
 
+    console.log('req.body',req.body,id)
     const companyId = new mongoose.Types.ObjectId(req.user.company);
 
     // --- 2. Buscar el legajo original (y popular su tipo actual) ---
@@ -1433,6 +1432,7 @@ router.patch('/docket/updatetype/:id', auth, async (req, res) => {
     await newHistory.save();
 
     originalDocket.docket_type = newDocketTypeId;
+    originalDocket.docket_type_predicted = undefined; // Invalidate old prediction
     let updatedDocket = await originalDocket.save();
     
     res.status(200).json(updatedDocket.docketId);
@@ -1603,10 +1603,17 @@ router.get('/docket/detail/:id', auth, async (req, res) => {
 
     // Buscamos el legajo por su ID y el de la compañía para seguridad.
     const docket = await Docket.findOne({ _id: id, company: companyId })
-  .populate({ path: 'docket_type', select: 'name parent', as:'docket_type' })
-  .populate({ path: 'docket_area', select: 'name', as:'docket_area' })
-  .populate({ path: 'profile', select: 'name last email', as:'profile' })
-  .populate('source', 'name label'); 
+      .populate({
+          path: 'docket_type',
+          select: 'name parent fields',
+          populate: {
+              path: 'parent',
+              select: 'name'
+          }
+      })
+      .populate({ path: 'docket_area', select: 'name' })
+      .populate({ path: 'profile', select: 'name last email' })
+      .populate('source', 'name label'); 
 
     const history = await DocketHistory.find({ docket: id })
       .sort({ createdAt: -1 })
@@ -1617,6 +1624,11 @@ router.get('/docket/detail/:id', auth, async (req, res) => {
         return res.status(404).json({ msg: 'Legajo no encontrado.' });
     }
     const docketObject = docket.toObject();
+
+    // Transform the parent object into just the name
+    if (docketObject.docket_type && docketObject.docket_type.parent && typeof docketObject.docket_type.parent === 'object') {
+        docketObject.docket_type.parent = docketObject.docket_type.parent.name;
+    }
 
     // 1. Define tu bucket (idealmente desde variables de entorno)
     const BUCKET_NAME = process.env.S3_BUCKET_INCIDENT; // Reemplaza con tu variable
@@ -1676,6 +1688,42 @@ router.get('/docket/detail/:id', auth, async (req, res) => {
   }
 });
 
+
+router.delete('/docket/delete/:id', auth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de legajo no válido.' });
+        }
+
+        const docket = await Docket.findOne({ _id: id, company: companyId });
+
+        if (!docket) {
+            return res.status(404).json({ msg: 'Legajo no encontrado o no tiene permisos para eliminarlo.' });
+        }
+
+        docket.status = 'deleted';
+        await docket.save();
+
+        const newHistory = new DocketHistory({
+            docket: docket._id,
+            user: req.user.id,
+            userModel: 'users',
+            status: 'deleted',
+            content: 'Legajo eliminado'
+        });
+        await newHistory.save();
+
+        res.json({ msg: 'Legajo eliminado correctamente.', id: docket._id });
+
+    } catch (error) {
+        console.error("Error deleting docket:", error);
+        res.status(500).send('Error del servidor');
+        }
+});
+
 router.get('/docket/:id', auth, async (req, res) => {
     console.log(req.params)
   try {
@@ -1689,16 +1737,28 @@ router.get('/docket/:id', auth, async (req, res) => {
 
     // Buscamos el legajo por su ID y el de la compañía para seguridad.
     const docket = await Docket.findOne({ _id: id, company: companyId })
-  .populate({ path: 'docket_type', select: 'name parent', as:'docket_type' })
-  .populate({ path: 'docket_area', select: 'name', as:'docket_area' })
-  .populate({ path: 'profile', select: 'name last email', as:'profile' })
-  .populate('source', 'name label'); 
+      .populate({
+          path: 'docket_type',
+          select: 'name parent fields',
+          populate: {
+              path: 'parent',
+              select: 'name'
+          }
+      })
+      .populate({ path: 'docket_area', select: 'name' })
+      .populate({ path: 'profile', select: 'name last email' })
+      .populate('source', 'name label');
 
     // --- 3. Combinar los resultados ---
     if (!docket) {
         return res.status(404).json({ msg: 'Legajo no encontrado.' });
     }
     const docketObject = docket.toObject();
+
+    // Transform the parent object into just the name
+    if (docketObject.docket_type && docketObject.docket_type.parent && typeof docketObject.docket_type.parent === 'object') {
+        docketObject.docket_type.parent = docketObject.docket_type.parent.name;
+    }
 
     // 1. Define tu bucket (idealmente desde variables de entorno)
     const BUCKET_NAME = process.env.S3_BUCKET_INCIDENT; // Reemplaza con tu variable
