@@ -549,7 +549,7 @@ router.post('/profile', [auth, [
         // Generate fictitious email if not provided
         if (!email || email.trim() === '') {
             const timestamp = Date.now();
-            email = `dni_${dni}_${timestamp}@ficticio.com`;
+            email = `dni_${dni}_${timestamp}@fakemail.com`;
             console.log(`Generated fictitious email: ${email}`);
         }
 
