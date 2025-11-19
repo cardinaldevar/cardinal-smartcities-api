@@ -1177,6 +1177,68 @@ router.post('/docket/predict/', auth, async (req, res) => {
 
 });
 
+router.post('/docket/area/refine', auth, [
+    check('areaIds', 'areaIds debe ser un array de Ids').isArray(),
+    check('areaIds.*', 'Cada elemento de areaIds debe ser un MongoID válido').isMongoId(),
+    check('coordinate', 'coordinate debe ser un array de 2 números').isArray({ min: 2, max: 2 }),
+    check('coordinate.*', 'Las coordenadas deben ser números').isNumeric()
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+        const { areaIds, coordinate } = req.body;
+        const [lng, lat] = coordinate;
+
+        // 1. Find the zone that contains the coordinate
+        const zone = await Zone.findOne({
+            location: {
+                $geoIntersects: {
+                    $geometry: {
+                        type: "Point",
+                        coordinates: [lng, lat]
+                    }
+                }
+            }
+        });
+
+        if (!zone) {
+            // If no zone is found, it's not necessarily an error, maybe we should return an empty array or a specific message.
+            // For now, let's return a 404, but this could be changed based on frontend requirements.
+            return res.status(404).json({ msg: 'No se encontró una zona para la coordenada proporcionada.' });
+        }
+
+        // 2. Find the IncidentDocketArea that matches the zone and is in the provided list
+        const docketArea = await DocketArea.findOne({
+            _id: { $in: areaIds.map(id => new mongoose.Types.ObjectId(id)) },
+            zone: zone._id
+        })
+        .populate({
+            path: 'parent',
+            select: 'name'
+        });
+
+        if (!docketArea) {
+            return res.status(404).json({ msg: 'No se encontró un área de legajo que coincida con la zona y los IDs proporcionados.' });
+        }
+        
+        // Construct the response object to match what might be expected from other endpoints
+        const result = {
+            _id: docketArea._id,
+            name: docketArea.name,
+            parent: docketArea.parent ? docketArea.parent.name : null
+        };
+
+        res.json(result);
+
+    } catch (error) {
+        console.error('Error al refinar el área del legajo:', error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
 
 router.post('/docket/map/search', auth, async (req, res) => {
 
