@@ -617,7 +617,8 @@ router.post('/profile', [auth, [
             address: address ? address.value : undefined,
             location: address ? address.location : undefined,
             floor,
-            door
+            door,
+            registerFrom:'dashboard'
         });
 
        await newProfile.save();

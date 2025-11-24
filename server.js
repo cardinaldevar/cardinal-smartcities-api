@@ -200,7 +200,13 @@ cron.schedule("1 * * * *",()=> {
 app.use(cors(corsOptions));
 //,credentials: true
 //app.get("/", (req, res) => res.send("API RUNNING"));
-app.use(express.json({ extended: true,limit: '15mb' }));
+app.use(express.json({ 
+  extended: true,
+  limit: '15mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString();
+  }
+ }));
 
 //define routes
 app.use("/api/user", require("./routes/api/user"));
@@ -235,6 +241,7 @@ app.use("/api/incident", require("./routes/api/incident"));
 
 //EXTERNAL SERVICES
 app.use("/api/incident/external", require("./routes/api/incident/external"));
+app.use("/api/incident/whatsapp", require("./routes/api/botWhatsapp"));
 //LANDING SERVICES
 app.use("/api/public/landing", require("./routes/api/public/landing"));
 

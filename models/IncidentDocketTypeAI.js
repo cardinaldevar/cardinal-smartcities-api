@@ -28,7 +28,13 @@ const IncidentDocketTypeAISchema = new mongoose.Schema({
     createdAt: {
         type: Date,
         default: Date.now
-    }
+    },
+    docket: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'IncidentDocket',
+        required: true,
+        index: true 
+    },
 }, {
     collection: 'incident.docket_types.AImodel',
     timestamps: true

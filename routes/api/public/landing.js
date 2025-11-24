@@ -228,7 +228,8 @@ router.post('/register', [
              location,
              phone,
              birth,
-             isVerified:true
+             isVerified:true,
+             registerFrom:'landing'
         });
         
         

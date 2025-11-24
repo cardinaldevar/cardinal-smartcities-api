@@ -3,6 +3,10 @@ const { Schema } = mongoose;
 
 const IncidentProfileSchema = new Schema({
     company: { type: mongoose.Schema.Types.ObjectId,ref: 'company'},
+    registerFrom:{
+        type: String,
+        enum: ['dashboard', 'landing', 'whatsapp'] 
+    },
     name: {
         type: String,
         required: true,
@@ -16,6 +20,7 @@ const IncidentProfileSchema = new Schema({
     dni: {
         type: String,
         unique: true,
+        sparse: true,
         trim: true
     },
     transactionNumber: {
