@@ -727,7 +727,7 @@ router.post('/docket/search', auth, async (req, res) => {
 
     } = req.body;
 
-   // console.log(req.body)
+   
 
     const sortOptions = {};
 
@@ -794,8 +794,13 @@ router.post('/docket/search', auth, async (req, res) => {
 
     if (docketArea && docketArea.length > 0) {
 
-        const initialAreaIds = docketArea.map(area => new mongoose.Types.ObjectId(area._id));
-        console.log(initialAreaIds)
+        let initialAreaIds;
+        
+        if(req.user.docket_area?.length >= 1){
+            initialAreaIds = req.user.docket_area.map(_id => new mongoose.Types.ObjectId(_id));
+        }else{
+            initialAreaIds = docketArea.map(area => new mongoose.Types.ObjectId(area._id));
+        }
 
         const idSearchPipeline = [
             {  $match: { _id: { $in: initialAreaIds } } },
@@ -1581,7 +1586,7 @@ router.post('/docket/map/search', auth, async (req, res) => {
       sortBy,
       docketId,
       docketTypes,
-      docketAreas, 
+      docketArea, 
       status,     
       startDate,
       endDate,
@@ -1590,7 +1595,7 @@ router.post('/docket/map/search', auth, async (req, res) => {
       textSearch // Búsqueda de texto libre en la descripción
     } = req.body;
 
-    console.log(req.body)
+    //console.log(req.body)
 
     const sortOptions = {};
     if (sortBy && sortBy.length > 0) {
@@ -1625,14 +1630,10 @@ router.post('/docket/map/search', auth, async (req, res) => {
         // 1. Obtener los IDs iniciales del filtro
         const initialTypeIds = docketTypes.map(dock => new mongoose.Types.ObjectId(dock._id));
 
-        // 2. Definir el pipeline para buscar todos los IDs descendientes
         const idSearchPipeline = [
-            // Etapa 1: Empezar con los IDs seleccionados en el filtro
             { 
                 $match: { _id: { $in: initialTypeIds } } 
             },
-            
-            // Etapa 2: Buscar recursivamente todos los hijos
             {
                 $graphLookup: {
                     from: 'incident.docket_types', // El nombre de tu colección
@@ -1643,8 +1644,6 @@ router.post('/docket/map/search', auth, async (req, res) => {
                     maxDepth: 10                   // Límite de seguridad para evitar loops infinitos (ajústalo si es necesario)
                 }
             },
-            
-            // Etapa 3: Proyectar un solo array que contenga el ID original Y todos sus descendientes
             {
                 $project: {
                     allRelatedIds: {
@@ -1655,16 +1654,8 @@ router.post('/docket/map/search', auth, async (req, res) => {
                     }
                 }
             },
-            
-            // Etapa 4: "Desenrollar" (unwind) el array para tener una fila por cada ID
-            { 
-                $unwind: '$allRelatedIds' 
-            },
-            
-            // Etapa 5: Agrupar por el ID para obtener un conjunto único de todos los IDs
-            { 
-                $group: { _id: '$allRelatedIds' } 
-            }
+            { $unwind: '$allRelatedIds' },
+            { $group: { _id: '$allRelatedIds' } }
         ];
 
         // 3. Ejecutar la agregación en el modelo DocketType
@@ -1672,7 +1663,6 @@ router.post('/docket/map/search', auth, async (req, res) => {
         
         // 4. Mapear los resultados a un array plano de ObjectIds
         const allIdsToFilter = idDocs.map(doc => doc._id);
-        console.log('allIdsToFilter',JSON.stringify(allIdsToFilter))
         // 5. Usar este array final en tu condición de match
         if (allIdsToFilter.length > 0) {
             matchConditions.docket_type = { $in: allIdsToFilter };
@@ -1682,9 +1672,50 @@ router.post('/docket/map/search', auth, async (req, res) => {
         }
         
     }
-    if (docketAreas && docketAreas.length > 0) {
-      matchConditions.docket_area = { $in: docketAreas.map(p => new mongoose.Types.ObjectId(p._id)) };
+    
+    if (docketArea && docketArea.length > 0) {
+
+        let initialAreaIds;
+        
+        if(req.user.docket_area?.length >= 1){
+            initialAreaIds = req.user.docket_area.map(_id => new mongoose.Types.ObjectId(_id));
+        }else{
+            initialAreaIds = docketArea.map(area => new mongoose.Types.ObjectId(area._id));
+        }
+
+        const idSearchPipeline = [
+            {  $match: { _id: { $in: initialAreaIds } } },
+            {
+                $graphLookup: {
+                    from: 'incident.docket_areas',
+                    startWith: '$_id',
+                    connectFromField: '_id',
+                    connectToField: 'parent',
+                    as: 'descendants',
+                    maxDepth: 10
+                }
+            },
+            {
+                $project: {
+                    allRelatedIds: {
+                        $concatArrays: [ [ '$_id' ], '$descendants._id' ]
+                    }
+                }
+            },
+            { $unwind: '$allRelatedIds'  },
+            { $group: { _id: '$allRelatedIds' } }
+        ];
+
+        const idDocs = await DocketArea.aggregate(idSearchPipeline);
+        const allIdsToFilter = idDocs.map(doc => doc._id);
+
+        if (allIdsToFilter.length > 0) {
+            matchConditions.docket_area = { $in: allIdsToFilter };
+        } else {
+            matchConditions.docket_area = { $in: initialAreaIds };
+        }
     }
+
     if (profile && profile.length > 0) {
       matchConditions.profile = { $in: profile.map(p => new mongoose.Types.ObjectId(p._id)) };
     }
@@ -1699,7 +1730,7 @@ router.post('/docket/map/search', auth, async (req, res) => {
 
     if (zone && Array.isArray(zone) && zone.length > 0) {
       
-      console.log('Zonas recibidas:', JSON.stringify(zone));
+      //console.log('Zonas recibidas:', JSON.stringify(zone));
 
       // 1. Buscamos si hay ALGUNA zona de tipo 'custom'
       const customZones = zone.filter(

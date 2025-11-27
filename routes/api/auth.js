@@ -11,6 +11,7 @@ const config = require('config');
 const { getURLS3 } = require("../../utils/s3.js");
 const { check, validationResult } = require('express-validator');
 const CoreSection = require('../../models/CoreSection');
+const IncidentDocketArea = require('../../models/IncidentDocketArea');
 var randtoken = require('rand-token');
 const { nanoid } = require('nanoid');
 const { sendNewPasswordEmail } = require('../../utils/ses');
@@ -62,6 +63,8 @@ const buildMenuTree = (sections) => {
     return roots;
 };
 
+
+
 // @route GET API USER
 router.get('/', auth, async (req,res) => {
     try{
@@ -104,23 +107,11 @@ router.post('/',[
     
     try {
 
-        //see if user existe
-      /*  let user = await User.findOne({}).populate('company').populate('category').populate({
-            path: 'access.id',
-            model: 'core.section',
-            select: 'name nameField position'
-          }).then(user => {
-            if (user && user.access && Array.isArray(user.access)) {
-                user.access.sort((a, b) => a.id.position - b.id.position);
-            }
-            return user;
-          });*/
-
-          const [user, allSections] = await Promise.all([
+        const [user, allSections] = await Promise.all([
             User.findOne({email,appSystem:true,status:1}).populate('company').populate('category').lean(),
             CoreSection.find({ status: 1 }).sort({ order: 1 }).lean() 
         ]);
-       console.log('user',user)
+       //console.log('user',user)
 
 
         if(!user){
@@ -176,6 +167,13 @@ router.post('/',[
                     
                 const finalMenuTree = buildMenuTree(userMenuSections);
 
+                let populatedDocketArea = [];
+                if (user.docket_area && user.docket_area.length > 0) {
+                    populatedDocketArea = await IncidentDocketArea.find({
+                        '_id': { $in: user.docket_area }
+                    }).select('_id name').lean();
+                }
+
                 const payload ={
                     user:{
                         id:user._id,
@@ -187,7 +185,8 @@ router.post('/',[
                         license:user.company.license,
                         role:user.category.role,
                         country_code:user.company.country_code,
-                        timezone:user.company.timezone
+                        timezone:user.company.timezone,
+                        docket_area: user.docket_area || []
                     }
                     
                 }
@@ -200,7 +199,7 @@ router.post('/',[
                     fullName:user.name,
                     email:user.email,
                     fleetAccess:user.fleetAccess,
-                    avatar:user.avatar === null ?  await getURLS3(user.company.logo,120, '') :  await getURLS3(`xs_${user.company.logo}`,120, ''),
+                    avatar:user.avatar === null ?  await getURLS3(user.company.logo,120, '') :  await getURLS3(`xs_${user.avatar}`,120, ''),
                     company:user.company._id,
                     license:user.company.license,
                     location:user.company.location,
@@ -212,7 +211,8 @@ router.post('/',[
                     },
                     country_code:user.company.country_code,
                     timezone:user.company.timezone,
-                    access:finalMenuTree
+                    access:finalMenuTree,
+                    docket_area: populatedDocketArea
                 };
 
 
@@ -245,7 +245,7 @@ router.post('/',[
 // @route GET API USER
 router.get('/me', auth, async (req,res) => {
 
-    console.log('/me',req.user)
+   // console.log('/me',req.user)
     try {
         const [user, allSections] = await Promise.all([
             User.findById(req.user.id).populate('company').populate('category').lean(),
@@ -281,6 +281,13 @@ router.get('/me', auth, async (req,res) => {
             
         const finalMenuTree = buildMenuTree(userMenuSections);
 
+        let populatedDocketArea = [];
+        if (user.docket_area && user.docket_area.length > 0) {
+            populatedDocketArea = await IncidentDocketArea.find({
+                '_id': { $in: user.docket_area }
+            }).select('_id name').lean();
+        }
+        
         // El objeto de respuesta ya está bien, no necesita cambios
         res.json({
             _id: user._id,
@@ -302,7 +309,8 @@ router.get('/me', auth, async (req,res) => {
             },
             country_code: user.company.country_code,
             timezone: user.company.timezone,
-            access: finalMenuTree
+            access: finalMenuTree,
+            docket_area: populatedDocketArea
         });
         
     } catch(err) {
