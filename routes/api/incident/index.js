@@ -370,12 +370,52 @@ router.get('/search', auth, async (req, res) => {
       return res.json([]);
     }
 
-     const pipeline = [
-      {
-        $match: {
-          company: companyId,
-          docketId: { $regex: searchTerm.trim(), $options: 'i' }
+    //limiter for docket_area
+    const matchConditions = {
+        company: companyId,
+        docketId: { $regex: searchTerm.trim(), $options: 'i' }
+    };
+
+    if (req.user.docket_area && req.user.docket_area.length > 0) {
+        const initialAreaIds = req.user.docket_area.map(_id => new mongoose.Types.ObjectId(_id));
+
+        const idSearchPipeline = [
+            { $match: { _id: { $in: initialAreaIds } } },
+            {
+                $graphLookup: {
+                    from: 'incident.docket_areas',
+                    startWith: '$_id',
+                    connectFromField: '_id',
+                    connectToField: 'parent',
+                    as: 'descendants',
+                    maxDepth: 10
+                }
+            },
+            {
+                $project: {
+                    allRelatedIds: {
+                        $concatArrays: [ [ '$_id' ], '$descendants._id' ]
+                    }
+                }
+            },
+            { $unwind: '$allRelatedIds' },
+            { $group: { _id: '$allRelatedIds' } }
+        ];
+
+        const idDocs = await DocketArea.aggregate(idSearchPipeline);
+        const allIdsToFilter = idDocs.map(doc => doc._id);
+
+        if (allIdsToFilter.length > 0) {
+            matchConditions.docket_area = { $in: allIdsToFilter };
+        } else {
+            // Fallback to original IDs if something goes wrong
+            matchConditions.docket_area = { $in: initialAreaIds };
         }
+    }
+
+    const pipeline = [
+      {
+        $match: matchConditions
       },
       {
         $lookup: {
@@ -650,6 +690,138 @@ router.post('/profile', [auth, [
     } catch (err) {
         console.error(err.message);
         if (err.code === 11000) {
+             return res.status(400).json({ message: 'Error de duplicado. El DNI o Email ya existe.' });
+        }
+        res.status(500).send('Error del servidor');
+    }
+});
+
+
+router.get('/profile/detail/:id', auth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de perfil no válido.' });
+        }
+
+        const profile = await IncidentProfile.findOne({ _id: id, company: companyId }).lean();
+
+        if (!profile) {
+            return res.status(404).json({ msg: 'Perfil no encontrado.' });
+        }
+
+        // Reformat the address field to match {value: address, location} structure
+        if (profile.address || profile.location) {
+            profile.address = {
+                value: profile.address || '', // Ensure value is a string or empty
+                location: profile.location || null // location object or null
+            };
+            delete profile.location; // Remove the top-level location field
+        } else {
+            profile.address = null; // If no address or location data, set address to null
+        }
+
+        // Format the birth date to YYYY-MM-DD to avoid timezone issues on the front-end
+        if (profile.birth) {
+            profile.birth = moment.utc(profile.birth).format('YYYY-MM-DD');
+        }
+
+        console.log(JSON.stringify(profile))
+        res.json(profile);
+
+    } catch (error) {
+        console.error("Error fetching incident profile details:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
+
+/**
+ * @route   PATCH api/incident/profile/:id
+ * @desc    Update an incident profile
+ * @access  Private
+ */
+router.patch('/profile/:id', [auth, [
+    check('name', 'El nombre es requerido').optional().not().isEmpty(),
+    check('last', 'El apellido es requerido').optional().not().isEmpty(),
+    check('dni', 'El DNI es requerido y debe ser numérico').optional().isNumeric().not().isEmpty(),
+    check('email', 'El email no es válido').optional().isEmail(),
+]], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+        const { id } = req.params;
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de perfil no válido.' });
+        }
+
+        const profile = await IncidentProfile.findOne({ _id: id, company: companyId });
+
+        if (!profile) {
+            return res.status(404).json({ msg: 'Perfil no encontrado.' });
+        }
+
+        const {
+            name,
+            last,
+            dni,
+            transactionNumber,
+            email,
+            phone,
+            birth,
+            gender,
+            password,
+            address,
+            floor,
+            door,
+            isVerified,
+            notify
+        } = req.body;
+
+        // Update fields if they are provided in the request body
+        if (name) profile.name = name;
+        if (last) profile.last = last;
+        if (dni) profile.dni = dni;
+        if (transactionNumber) profile.transactionNumber = transactionNumber;
+        if (email) profile.email = email;
+        if (phone) profile.phone = phone;
+        if (birth) profile.birth = birth;
+        if (gender) profile.gender = gender;
+        if (typeof isVerified !== 'undefined') profile.isVerified = isVerified;
+        if (typeof notify !== 'undefined') profile.notify = notify;
+        if (floor) profile.floor = floor;
+        if (door) profile.door = door;
+
+        // Handle nested address object
+        if (address) {
+            if (typeof address.value !== 'undefined') {
+                profile.address = address.value;
+            }
+            if (typeof address.location !== 'undefined') {
+                profile.location = address.location;
+            }
+        }
+
+        // Handle password update only if a new password is provided
+        if (password && password.length > 0) {
+            const salt = await bcrypt.genSalt(10);
+            profile.password = await bcrypt.hash(password, salt);
+        }
+
+        await profile.save();
+
+        res.json(profile);
+
+    } catch (error) {
+        console.error("Error updating incident profile:", error);
+        if (error.code === 11000) {
              return res.status(400).json({ message: 'Error de duplicado. El DNI o Email ya existe.' });
         }
         res.status(500).send('Error del servidor');
@@ -2079,7 +2251,7 @@ router.get('/docket/detail/:id', auth, async (req, res) => {
           }
       })
       .populate({ path: 'docket_area', select: 'name' })
-      .populate({ path: 'profile', select: 'name last email' })
+      .populate({ path: 'profile', select: 'name last email phone' })
       .populate('source', 'name label'); 
 
     const history = await DocketHistory.find({ docket: id })
