@@ -317,14 +317,31 @@ router.post('/docket', [
         }
 
         const data = JSON.parse(req.body.data);
-        const { description, prediction, sentiment, details, suscribeDocket, docketId, isNewDocket } = data;
+        const { description, prediction, sentiment, details: originalDetails, suscribeDocket, docketId, isNewDocket } = data;
 
         let address = null;
         let location = null;
+        const details = {}; // Objeto de detalles refactorizado
 
-        if (details && details.address && details.address.value) {
-            address = details.address.value;
-            location = details.address.location;
+        if (originalDetails) {
+            // La dirección se maneja por separado
+            if (originalDetails.address && originalDetails.address.value) {
+                address = originalDetails.address.value;
+                location = originalDetails.address.location;
+            }
+
+            // Iterar sobre todas las propiedades de los detalles originales
+            for (const key in originalDetails) {
+                if (Object.prototype.hasOwnProperty.call(originalDetails, key) && key !== 'address') {
+                    const prop = originalDetails[key];
+                    // Si es un objeto con una propiedad 'value', extráigala. De lo contrario, cópielo como está.
+                    if (prop && typeof prop === 'object' && prop.value !== undefined) {
+                        details[key] = prop.value;
+                    } else {
+                        details[key] = prop;
+                    }
+                }
+            }
         }
 
         if (suscribeDocket === true && docketId) {
@@ -381,7 +398,7 @@ router.post('/docket', [
 
 
         console.log('Archivos recibidos:', files.length);
-        console.log('Datos del formulario:', { description, prediction, details, address, location });
+        //console.log('Datos del formulario:', { description, prediction, details, address, location });
 
         const docketTypePredicted = {
             refId: prediction._id,
