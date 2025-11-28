@@ -728,7 +728,6 @@ router.get('/profile/detail/:id', auth, async (req, res) => {
             profile.birth = moment.utc(profile.birth).format('YYYY-MM-DD');
         }
 
-        console.log(JSON.stringify(profile))
         res.json(profile);
 
     } catch (error) {
