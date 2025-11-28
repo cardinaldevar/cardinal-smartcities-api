@@ -42,6 +42,7 @@
     "multer": "^2.0.2",
     "nanoid": "^3.3.4",
     "node-cron": "^2.0.3",
+    "pdfkit": "^0.17.2",
     "rand-token": "^1.0.1",
     "request": "^2.88.0",
     "sharp": "^0.34.4",

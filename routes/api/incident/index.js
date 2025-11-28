@@ -14,9 +14,12 @@ const https = require('https');
 const mongoose = require('mongoose');
 const axios = require('axios');
 const { getSignedUrlForFile, uploadFileToS3 } = require('../../../utils/s3helper');
+const { getURLS3 } = require('../../../utils/s3.js');
+const PDFDocument = require('pdfkit');
 const bcrypt = require('bcryptjs');
 const randtoken = require('rand-token');
 const { sendNewProfileEmail } = require('../../../utils/ses');
+const { statusIncident } = require('../../../utils/CONS.js');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -225,6 +228,335 @@ router.delete('/docket/:id/subscriber/:subscriber', auth, async (req, res) => {
 
     } catch (error) {
         console.error("Error deleting docket subscriber:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
+
+/**
+ * @route   GET api/incident/docket/download/:id
+ * @desc    Generate and upload a PDF report for a docket.
+ * @access  Private
+ */
+router.get('/docket/download/:id', auth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de legajo no válido.' });
+        }
+
+        // 1. Fetch all data
+        const docket = await Docket.findOne({ _id: id, company: companyId })
+            .populate('profile', 'name last dni email phone address')
+            .populate('docket_type', 'name')
+            .populate({
+                path: 'docket_area',
+                select: 'name parent',
+                populate: { path: 'parent', select: 'name' }
+            })
+            .populate('source', 'name')
+            .populate('company', 'logo')
+            .lean();
+
+        if (!docket) {
+            return res.status(404).json({ msg: 'Legajo no encontrado.' });
+        }
+
+        const history = await DocketHistory.find({ docket: docket._id })
+            .populate({
+                path: 'user',
+                select: 'name'
+            })
+            .sort({ 'createdAt': -1 }) // Sort history descending
+            .lean();
+        docket.history = history;
+
+        // 2. Get Logo URLs and then fetch them as buffers
+        const expiresInMinutes = 2880;
+        const expiresInSeconds = expiresInMinutes * 60;
+
+        const logoUrl = docket.company && docket.company.logo 
+            ? await getURLS3(docket.company.logo, expiresInMinutes, '') 
+            : '';
+        const cardinalLogoUrl = await getSignedUrlForFile('logo_cardinal_sc.png', 'cardinal-sc-argentina', expiresInSeconds);
+
+        let companyLogoBuffer = null;
+        if (logoUrl) {
+            try {
+                const response = await axios.get(logoUrl, { responseType: 'arraybuffer' });
+                companyLogoBuffer = Buffer.from(response.data);
+            } catch (imgError) {
+                console.error("Could not fetch company logo:", imgError.message);
+            }
+        }
+        
+        let cardinalLogoBuffer = null;
+        if (cardinalLogoUrl) {
+             try {
+                const response = await axios.get(cardinalLogoUrl, { responseType: 'arraybuffer' });
+                cardinalLogoBuffer = Buffer.from(response.data);
+            } catch (imgError) {
+                console.error("Could not fetch cardinal logo:", imgError.message);
+            }
+        }
+
+        // 3. Generate PDF
+                const doc = new PDFDocument({
+                    size: 'A4',
+                    margins: { top: 90, bottom: 28.35, left: 28.35, right: 28.35 }, // 1cm sides/bottom, larger top for header
+                    bufferPages: true
+                });
+        
+                const buffers = [];
+                doc.on('data', buffers.push.bind(buffers));
+        
+                // --- Reusable Header ---
+                const drawHeader = () => {
+                    const headerY = 20;
+                    const companyLogoHeight = 40;
+                    const cardinalLogoHeight = 35; // Reduced size
+                    
+                    // Use dynamic margins
+                    const leftMargin = doc.page.margins.left;
+                    const rightMargin = doc.page.margins.right;
+        
+                    if (companyLogoBuffer) {
+                        doc.image(companyLogoBuffer, leftMargin, headerY, { height: companyLogoHeight });
+                    }
+        
+                    if (cardinalLogoBuffer) {
+                        doc.image(cardinalLogoBuffer, doc.page.width - rightMargin - 100, headerY, { height: cardinalLogoHeight, align: 'right' });
+                    }
+                    
+                    // Use the taller of the two logos for line positioning
+                    const tallerLogoHeight = Math.max(companyLogoHeight, cardinalLogoHeight);
+                    doc.moveTo(leftMargin, headerY + tallerLogoHeight + 10)
+                       .lineTo(doc.page.width - rightMargin, headerY + tallerLogoHeight + 10)
+                       .strokeColor('#cecece')
+                       .lineWidth(0.5)
+                       .stroke();
+                };        
+                doc.on('pageAdded', drawHeader);
+                drawHeader(); // Draw header on the first page
+        
+                // --- PDF Content ---
+                doc.y = doc.page.margins.top; // Start after header
+        
+                const col1X = doc.page.margins.left;
+                const col2X = doc.page.width / 2 + 10;
+                const colWidth = (doc.page.width - doc.page.margins.left - doc.page.margins.right) / 2 - 20;
+                const initialY = doc.y;
+        
+                doc.fontSize(9);
+        
+                // --- Left Column: Docket Info ---
+                doc.font('Helvetica-Bold').text('Reporte de Legajo', col1X, initialY, { width: colWidth });
+                const lineY = doc.y;
+        
+                // --- Status Badge Background (drawn first) ---
+                const statusObj = statusIncident.find(s => s.value === docket.status);
+                if (statusObj) {
+                    const docketIdText = `#${docket.docketId}`;
+                    const idWidth = doc.font('Helvetica').widthOfString(docketIdText);
+        
+                    const statusText = statusObj.label.toUpperCase();
+                    const textWidth = doc.font('Helvetica-Bold').fontSize(7).widthOfString(statusText);
+                    const padding = 5;
+                    const badgeHeight = 9;
+                    const badgeWidth = textWidth + (padding * 2);
+        
+                    const badgeX = col1X + idWidth +20;
+                    // Calculate Y for the badge to be vertically centered on the line
+                    const badgeY = lineY - 2; // Fine-tuned vertical alignment
+        
+                    // Draw rounded rectangle background
+                    doc.roundedRect(badgeX , badgeY, badgeWidth, badgeHeight, 8)
+                        .fill(statusObj.color);
+                }
+        
+                // --- Docket ID and Status Text (drawn on top) ---
+                // Set fill to black for docket ID
+                doc.fillColor('black').font('Helvetica').text(`#${docket.docketId}`, col1X, lineY);
+                
+                if (statusObj) {
+                    const docketIdText = `#${docket.docketId}`;
+                    const idWidth = doc.font('Helvetica').widthOfString(docketIdText);
+                    const statusText = statusObj.label.toUpperCase();
+                    const textWidth = doc.font('Helvetica-Bold').widthOfString(statusText);
+                    const padding = 5;
+                    const badgeWidth = textWidth + (padding * 2);
+                    const badgeX = col1X + idWidth + 32;
+        
+                    // Set fill to white for status text and draw it
+                    doc.fillColor('white').font('Helvetica-Bold').text(statusText, badgeX, lineY, {
+                        width: badgeWidth,
+                        align: 'center'
+                    });
+                }
+                        
+                doc.fillColor('black'); // Reset fill color
+                doc.moveDown(1.5);
+        
+                doc.font('Helvetica-Bold').text('Descripción', col1X, doc.y, { width: colWidth });
+                doc.font('Helvetica').text(docket.description || 'N/A', col1X, doc.y, { width: colWidth });
+                doc.moveDown();
+
+                doc.font('Helvetica-Bold').text('Tipo', col1X, doc.y, { width: colWidth });
+                doc.font('Helvetica').text(docket.docket_type ? docket.docket_type.name : 'N/A', col1X, doc.y, { width: colWidth });
+                doc.moveDown();
+        
+                const areaNames = docket.docket_area.map(area => {
+                    return area.parent ? `${area.parent.name} > ${area.name}` : area.name;
+                }).join(', ') || 'N/A';
+        
+                doc.font('Helvetica-Bold').text('Área', col1X, doc.y, { width: colWidth });
+                doc.font('Helvetica').text(areaNames, col1X, doc.y, { width: colWidth });
+                doc.moveDown();
+        
+                doc.font('Helvetica-Bold').text('Dirección del Incidente', col1X, doc.y, { width: colWidth });
+                doc.font('Helvetica').text(docket.address || 'N/A', col1X, doc.y, { width: colWidth });
+                doc.moveDown();
+        
+                doc.font('Helvetica-Bold').text('Origen: ', col1X, doc.y, { continued: true });
+                doc.font('Helvetica').text(docket.source ? docket.source.name : 'N/A', { width: colWidth });
+                doc.moveDown();
+                
+                const createdAtFormatted = moment.utc(docket.createdAt).tz('America/Argentina/Buenos_Aires').format('DD/MM/YY HH:mm');
+                const updatedAtFormatted = moment.utc(docket.updatedAt).tz('America/Argentina/Buenos_Aires').format('DD/MM/YY HH:mm');
+        
+                doc.font('Helvetica-Bold').text('Creado: ', col1X, doc.y, { continued: true });
+                doc.font('Helvetica').text(createdAtFormatted, { width: colWidth });
+                doc.moveDown();
+        
+                doc.font('Helvetica-Bold').text('Actualización: ', col1X, doc.y, { continued: true });
+                doc.font('Helvetica').text(updatedAtFormatted, { width: colWidth });
+                doc.moveDown();
+                
+                const leftColFinalY = doc.y;        
+                // --- Right Column: Profile Info ---
+                doc.y = initialY; // Reset Y for the second column
+                if (docket.profile) {
+                    const profile = docket.profile;
+                    doc.font('Helvetica-Bold').text('Datos del Solicitante', col2X, doc.y, { width: colWidth });
+                    doc.moveDown(1.5);
+        
+                    doc.font('Helvetica-Bold').text('Nombre', { width: colWidth });
+                    doc.font('Helvetica').text(`${profile.name || ''} ${profile.last || ''}`, { width: colWidth });
+                    doc.moveDown();
+        
+                    doc.font('Helvetica-Bold').text('Email', { width: colWidth });
+                    doc.font('Helvetica').text(profile.email || 'N/A', { width: colWidth });
+                    doc.moveDown();
+        
+                    doc.font('Helvetica-Bold').text('DNI', { width: colWidth });
+                    doc.font('Helvetica').text(profile.dni || 'N/A', { width: colWidth });
+                    doc.moveDown();
+        
+                    doc.font('Helvetica-Bold').text('Teléfono', { width: colWidth });
+                    doc.font('Helvetica').text(profile.phone || 'N/A', { width: colWidth });
+                    doc.moveDown();
+        
+                    doc.font('Helvetica-Bold').text('Dirección', { width: colWidth });
+                    doc.font('Helvetica').text(profile.address || 'N/A', { width: colWidth });
+                    doc.moveDown(); // Add a line break after address
+                    doc.font('Helvetica-Bold').text('Suscriptos: ', { continued: true });
+                    doc.font('Helvetica').text(docket.subscribers ? docket.subscribers.length.toString() : '0');
+                }
+                            
+                const rightColFinalY = doc.y;        
+                // Set Y to the bottom of the taller column before proceeding
+                doc.y = Math.max(leftColFinalY, rightColFinalY) + 20;
+        
+                // Add a line after this section
+                doc.moveTo(doc.page.margins.left, doc.y)
+                    .lineTo(doc.page.width - doc.page.margins.right, doc.y)
+                    .strokeColor('#cecece')
+                    .lineWidth(0.5)
+                    .stroke();
+                doc.moveDown();
+        
+                // --- History Section ---
+                doc.font('Helvetica-Bold').fontSize(12).text('Historial', col1X, doc.y);
+                doc.moveDown();
+        
+                doc.fontSize(9);
+                doc.fillColor('black');
+                
+                for (const item of docket.history) {
+                    const itemY = doc.y;
+                    const statusObj = statusIncident.find(s => s.value === item.status);
+                    
+                    let obsX = col1X;
+                    let obsY = itemY;
+        
+                    if (statusObj) {
+                        const statusText = statusObj.label.toUpperCase();
+                        const textWidth = doc.font('Helvetica-Bold').fontSize(6).widthOfString(statusText);
+                        const padding = 4;
+                        const badgeHeight = 10;
+                        const badgeWidth = textWidth + (padding * 2);
+        
+                        // Draw badge
+                        doc.roundedRect(col1X, itemY, badgeWidth, badgeHeight, 7).fill(statusObj.color);
+                        doc.fillColor('white').text(statusText, col1X + padding, itemY + 2.5);
+                        
+                        obsX = col1X + badgeWidth + 10;
+                        obsY = itemY + 2.5; // Align with text inside badge
+                    }
+        
+                    // Draw observation text
+                    doc.fillColor('black').font('Helvetica').fontSize(8).text(`obs: ${item.content || ''}`, obsX, obsY, {
+                        width: doc.page.width - doc.page.margins.right - obsX
+                    });
+                    // moveDown is handled automatically by text wrapping
+        
+                    // Draw date and user
+                    const dateFormatted = moment.utc(item.createdAt).tz('America/Argentina/Buenos_Aires').format('DD/MM/YY HH:mm');
+                    const userText = item.user ? item.user.name : 'Sistema';
+                    doc.fontSize(8).fillColor('#6B7280').text(`${dateFormatted} - ${userText}`, col1X);
+                    doc.moveDown(0.8);
+        
+                    // Separator Line (if not the last item)
+                    if (docket.history.indexOf(item) < docket.history.length - 1) {
+                        doc.moveTo(col1X, doc.y)
+                            .lineTo(doc.page.width - doc.page.margins.right, doc.y)
+                            .strokeColor('#EEEEEE') // Very light gray
+                            .lineWidth(0.5)
+                            .stroke();
+                        doc.moveDown();
+                    }
+                }        			        
+        // 4. Finalize PDF and get buffer
+        const pdfPromise = new Promise(resolve => {
+            doc.on('end', () => resolve(Buffer.concat(buffers)));
+            doc.end();
+        });
+
+        const pdfBuffer = await pdfPromise;
+
+        // 5. Upload to S3
+        const filename = `${docket.docketId}_${moment().format('DDMMYY_HHmm')}.pdf`;
+        const s3Bucket = 'cardinal-sc-argentina';
+        const s3Folder = `docket/${docket.docketId}`;
+        
+        const fakeFile = {
+            buffer: pdfBuffer,
+            originalname: filename,
+            mimetype: 'application/pdf'
+        };
+
+        const uploadedFile = await uploadFileToS3(fakeFile, s3Bucket, s3Folder);
+
+        // 6. Get a downloadable URL
+        const downloadUrl = await getSignedUrlForFile(uploadedFile.key, s3Bucket, 3600); // 1 hour expiration
+        
+        console.log({ downloadUrl });
+        res.json({ url:downloadUrl });
+
+    } catch (error) {
+        console.error("Error generating docket PDF:", error);
         res.status(500).send('Error del servidor');
     }
 });

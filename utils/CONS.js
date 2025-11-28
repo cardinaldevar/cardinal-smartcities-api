@@ -46,3 +46,19 @@ exports.evaluationTypeDescription = {
     'in':'Ingreso de zona',
     'out':'Fuera de zona'
 }
+
+
+exports.statusIncident = [
+  { value: 'new', label: 'Nuevo', color: '#3B82F6' }, // Azul
+  { value: 'assigned', label: 'Asignado', color: '#6366F1' }, // Índigo
+  { value: 'in_progress', label: 'En Progreso', color: '#F59E0B' }, // Ámbar
+  { value: 'returned', label: 'Devuelto a Origen', color: '#0EA5E9' },
+  { value: 'on_hold', label: 'Observado', color: '#6B7280' }, // Gris
+  { value: 'activity', label: 'Actividad', color: '#0EA5E9' }, // Azul claro (similar to returned)
+  { value: 'partially_resolved', label: 'Parcialmente Resuelto', color: '#C0E030' }, // Verde-Amarillo intermedio
+  { value: 'resolved', label: 'Resuelto', color: '#84CC16' }, // Lima
+  { value: 'closed', label: 'Cerrado', color: '#16A34A' },
+  { value: 'cancelled', label: 'Cancelado', color: '#EF4444' },
+  { value: 'archived', label: 'Archivado', color: '#475569' },
+  { value: 'deleted', label: 'Eliminado', color: '#B91C1C' }
+]
