@@ -17,6 +17,7 @@ const upload = multer({ storage: multer.memoryStorage({}), limits: { fileSize: 1
 const { uploadFileToS3 } = require('../../../utils/s3helper');
 const { sendDocketEmail } = require('../../../utils/ses');
 const IncidentDocketTypeAI = require('../../../models/IncidentDocketTypeAI');
+const IncidentDocketTypeValidate = require('../../../models/IncidentDocketTypeValidate');
 
 const companyId = new mongoose.Types.ObjectId('68e9c3977c6f1f402e7b91e0');
 
@@ -506,7 +507,7 @@ router.post('/docket', [
         res.status(500).send('Error del servidor');
     }
 });
-
+/*
 router.post('/training', [
     check('text', 'El texto es requerido').not().isEmpty(),
     check('category', 'El slug de la categoría es requerido').not().isEmpty(),
@@ -535,6 +536,42 @@ router.post('/training', [
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Error del servidor al guardar datos de entrenamiento: ' + err.message });
+    }
+});
+*/
+
+/**
+ * @route   POST /api/public/validate
+ * @desc    Valida un par de clave y valor contra la colección de validaciones.
+ * @access  Public
+ */
+router.post('/validate', [
+    check('key', 'La clave (key) es requerida').not().isEmpty(),
+    check('value', 'El valor (value) es requerido').not().isEmpty()
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { key, value } = req.body;
+
+    try {
+        const validationRule = await IncidentDocketTypeValidate.findOne({
+            company: companyId,
+            key,
+            value
+        });
+
+        if (validationRule) {
+            return res.status(200).json(true);
+        } else {
+            return res.status(400).json(false);
+        }
+
+    } catch (err) {
+        console.error('Error en el endpoint /validate:', err.message);
+        res.status(500).send('Error del servidor');
     }
 });
 

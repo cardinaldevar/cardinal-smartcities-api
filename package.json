@@ -53,6 +53,7 @@
   },
   "devDependencies": {
     "concurrently": "^4.1.1",
+    "csv-parser": "^3.2.0",
     "nodemon": "^1.19.1"
   }
 }
