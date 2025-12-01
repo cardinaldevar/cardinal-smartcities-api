@@ -3561,113 +3561,111 @@ router.post('/report', [auth, [
 
     try {
         const companyId = new mongoose.Types.ObjectId(req.user.company);
-        const { docket_type, status, startDate, endDate } = req.body;
+        const { docket_type, status, startDate, endDate, docket_area } = req.body;
 
-        console.log('startDate, endDate',startDate, endDate,req.body)
-
+        // 1. Build Initial Match Conditions
         const matchConditions = { company: companyId };
 
-        // Si no se especifican estados, usamos un conjunto por defecto.
         const targetStatus = (status && status.length > 0) ? status : ['new', 'in_progress', 'resolved'];
         matchConditions.status = { $in: targetStatus };
 
-        // Filtro por rango de fechas
         if (startDate || endDate) {
             matchConditions.createdAt = {};
-            if (startDate) matchConditions.createdAt.$gte = new Date(startDate);
-            if (endDate) matchConditions.createdAt.$lte = new Date(endDate);
+            if (startDate) matchConditions.createdAt.$gte = moment(startDate).startOf('day').toDate();
+            if (endDate) matchConditions.createdAt.$lte = moment(endDate).endOf('day').toDate();
         }
-        console.log('matchConditions',matchConditions)
-        // Filtro por tipo de legajo, incluyendo descendientes
+
         if (docket_type && docket_type.length > 0) {
             const initialTypeIds = docket_type.map(id => new mongoose.Types.ObjectId(id));
-
             const idSearchPipeline = [
                 { $match: { _id: { $in: initialTypeIds } } },
-                {
-                    $graphLookup: {
-                        from: 'incident.docket_types',
-                        startWith: '$_id',
-                        connectFromField: '_id',
-                        connectToField: 'parent',
-                        as: 'descendants',
-                        maxDepth: 10
-                    }
-                },
-                {
-                    $project: {
-                        allRelatedIds: { $concatArrays: [['$_id'], '$descendants._id'] }
-                    }
-                },
+                { $graphLookup: { from: 'incident.docket_types', startWith: '$_id', connectFromField: '_id', connectToField: 'parent', as: 'descendants', maxDepth: 10 } },
+                { $project: { allRelatedIds: { $concatArrays: [['$_id'], '$descendants._id'] } } },
                 { $unwind: '$allRelatedIds' },
                 { $group: { _id: '$allRelatedIds' } }
             ];
-
             const idDocs = await DocketType.aggregate(idSearchPipeline);
             const allIdsToFilter = idDocs.map(doc => doc._id);
-
             if (allIdsToFilter.length > 0) {
                 matchConditions.docket_type = { $in: allIdsToFilter };
             } else {
                 matchConditions.docket_type = { $in: initialTypeIds };
             }
         }
+        
+        if (docket_area && docket_area.length > 0) {
+            const initialAreaIds = docket_area.map(id => new mongoose.Types.ObjectId(id));
+            const idSearchPipeline = [
+                { $match: { _id: { $in: initialAreaIds } } },
+                { $graphLookup: { from: 'incident.docket_areas', startWith: '$_id', connectFromField: '_id', connectToField: 'parent', as: 'descendants', maxDepth: 10 } },
+                { $project: { allRelatedIds: { $concatArrays: [['$_id'], '$descendants._id'] } } },
+                { $unwind: '$allRelatedIds' },
+                { $group: { _id: '$allRelatedIds' } }
+            ];
+            const idDocs = await DocketArea.aggregate(idSearchPipeline);
+            const allIdsToFilter = idDocs.map(doc => doc._id);
+            if (allIdsToFilter.length > 0) {
+                matchConditions.docket_area = { $in: allIdsToFilter };
+            } else {
+                matchConditions.docket_area = { $in: initialAreaIds };
+            }
+        }
 
+        // 2. Pre-aggregation to find top 8 docket types based on initial filters
+        const topTypesPipeline = [
+            { $match: matchConditions },
+            { $group: { _id: '$docket_type', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 10 },
+            { $project: { _id: 1 } }
+        ];
+        const topTypesResult = await Docket.aggregate(topTypesPipeline);
+        const topTypesIds = topTypesResult.map(item => item._id).filter(id => id); // Filter out potential null/undefined IDs
+
+        // 3. Finalize match conditions to only include dockets from the top types
+        // This ensures all subsequent pipelines operate on the exact same dataset
+        if (topTypesIds.length > 0) {
+            matchConditions.docket_type = { $in: topTypesIds };
+        } else {
+            // If no types are found (e.g., empty result set), ensure no documents match.
+            // Using an impossible condition.
+            matchConditions.docket_type = { $in: [new mongoose.Types.ObjectId()] };
+        }
+
+        // 4. Define final pipelines using the unified matchConditions
         const barPipeline = [
             { $match: matchConditions },
-            {
-                $group: {
-                    _id: {
-                        docket_type: '$docket_type',
-                        status: '$status'
-                    },
-                    count: { $sum: 1 }
-                }
-            },
-            {
-                $group: {
-                    _id: '$_id.docket_type',
-                    statuses: {
-                        $push: {
-                            k: '$_id.status',
-                            v: '$count'
-                        }
-                    },
-                    total: { $sum: '$count' }
-                }
-            },
+            { $group: { _id: { docket_type: '$docket_type', status: '$status' }, count: { $sum: 1 } } },
+            { $group: { _id: '$_id.docket_type', statuses: { $push: { k: '$_id.status', v: '$count' } }, total: { $sum: '$count' } } },
             { $sort: { total: -1 } },
-            { $limit: 8 },
-            {
+            // The limit is no longer needed here as the filter is already applied in $match
+            { $lookup: { from: 'incident.docket_types', localField: '_id', foreignField: '_id', as: 'docketTypeInfo' } },
+            { $unwind: { path: '$docketTypeInfo', preserveNullAndEmptyArrays: true } },
+            { // NEW: Lookup for parent docket type info
                 $lookup: {
-                    from: 'incident.docket_types',
-                    localField: '_id',
+                    from: 'incident.docket_types', // Same collection
+                    localField: 'docketTypeInfo.parent',
                     foreignField: '_id',
-                    as: 'docketTypeInfo'
+                    as: 'parentDocketTypeInfo'
                 }
             },
-            {
+            { // NEW: Unwind parent docket type info
                 $unwind: {
-                    path: '$docketTypeInfo',
+                    path: '$parentDocketTypeInfo',
                     preserveNullAndEmptyArrays: true
                 }
             },
             {
                 $project: {
                     _id: 0,
-                    type: '$docketTypeInfo.name',
+                    type: { $ifNull: ['$docketTypeInfo.name', 'Sin Tipo'] },
+                    parent: { $ifNull: ['$parentDocketTypeInfo.name', null] },
                     ...targetStatus.reduce((acc, s) => {
                         acc[s] = {
                             $reduce: {
                                 input: '$statuses',
                                 initialValue: 0,
-                                in: {
-                                    $cond: [
-                                        { $eq: ['$$this.k', s] },
-                                        { $add: ['$$value', '$$this.v'] },
-                                        '$$value'
-                                    ]
-                                }
+                                in: { $cond: [ { $eq: ['$$this.k', s] }, { $add: ['$$value', '$$this.v'] }, '$$value' ] }
                             }
                         };
                         return acc;
@@ -3678,39 +3676,53 @@ router.post('/report', [auth, [
 
         const piePipeline = [
             { $match: matchConditions },
-            { 
-                $group: { 
-                    _id: '$source', 
-                    value: { $sum: 1 } 
-                } 
-            },
+            { $group: { _id: '$source', value: { $sum: 1 } } },
+            { $lookup: { from: 'incident.source', localField: '_id', foreignField: '_id', as: 'sourceInfo' } },
+            { $unwind: { path: '$sourceInfo', preserveNullAndEmptyArrays: true } },
+            { $project: { _id: 0, id: { $ifNull: ['$sourceInfo.name', 'unknown'] }, label: { $ifNull: ['$sourceInfo.label', 'Desconocido'] }, value: '$value' } }
+        ];
+
+        const linePipeline = [
+            { $match: matchConditions },
             {
-                $lookup: {
-                    from: 'incident.source',
-                    localField: '_id',
-                    foreignField: '_id',
-                    as: 'sourceInfo'
+                $group: {
+                    _id: {
+                        date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'America/Argentina/Buenos_Aires' } },
+                        status: '$status'
+                    },
+                    count: { $sum: 1 }
                 }
             },
             {
-                $unwind: {
-                    path: '$sourceInfo',
-                    preserveNullAndEmptyArrays: true
+                $group: {
+                    _id: '$_id.date',
+                    counts: { $push: { status: '$_id.status', count: '$count' } }
                 }
             },
+            { $sort: { _id: 1 } },
             {
                 $project: {
                     _id: 0,
-                    id: { $ifNull: ['$sourceInfo.name', 'unknown'] },
-                    label: { $ifNull: ['$sourceInfo.name', 'Desconocido'] },
-                    value: '$value'
+                    date: '$_id',
+                    ...targetStatus.reduce((acc, s) => {
+                        acc[s] = {
+                            $reduce: {
+                                input: '$counts',
+                                initialValue: 0,
+                                in: { $cond: [{ $eq: ['$$this.status', s] }, { $add: ['$$value', '$$this.count'] }, '$$value'] }
+                            }
+                        };
+                        return acc;
+                    }, {})
                 }
             }
         ];
-
-        const [bar, pie] = await Promise.all([
+        
+        // 5. Execute all pipelines in parallel
+        const [bar, pie ] = await Promise.all([ // eliminado line
             Docket.aggregate(barPipeline),
-            Docket.aggregate(piePipeline)
+            Docket.aggregate(piePipeline),
+          //  Docket.aggregate(linePipeline)
         ]);
 
         res.json({ bar, pie, status: targetStatus });

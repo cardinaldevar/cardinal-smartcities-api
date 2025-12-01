@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
-const IncidentDocketTypeValidateSchema = new Schema({
+const IncidentDocketTypeValidationSchema = new Schema({
     company: {
         type: Schema.Types.ObjectId,
         ref: 'Company',
@@ -22,6 +22,6 @@ const IncidentDocketTypeValidateSchema = new Schema({
 
 // Índice compuesto para optimizar las búsquedas de validación.
 // Asegura que no haya duplicados para la misma combinación de compañía, llave y valor.
-IncidentDocketTypeValidateSchema.index({ company: 1, key: 1, value: 1 }, { unique: true });
+IncidentDocketTypeValidationSchema.index({ company: 1, key: 1, value: 1 }, { unique: true });
 
-module.exports = mongoose.model('IncidentDocketTypeValidate', IncidentDocketTypeValidateSchema, 'incident.docket_types.validate');
+module.exports = mongoose.model('IncidentDocketTypeValidation', IncidentDocketTypeValidationSchema, 'incident.docket_types.validation');

@@ -17,7 +17,7 @@ const upload = multer({ storage: multer.memoryStorage({}), limits: { fileSize: 1
 const { uploadFileToS3 } = require('../../../utils/s3helper');
 const { sendDocketEmail } = require('../../../utils/ses');
 const IncidentDocketTypeAI = require('../../../models/IncidentDocketTypeAI');
-const IncidentDocketTypeValidate = require('../../../models/IncidentDocketTypeValidate');
+const IncidentDocketTypeValidation = require('../../../models/IncidentDocketTypeValidation');
 
 const companyId = new mongoose.Types.ObjectId('68e9c3977c6f1f402e7b91e0');
 
@@ -557,7 +557,7 @@ router.post('/validate', [
     const { key, value } = req.body;
 
     try {
-        const validationRule = await IncidentDocketTypeValidate.findOne({
+        const validationRule = await IncidentDocketTypeValidation.findOne({
             company: companyId,
             key,
             value

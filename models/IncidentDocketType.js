@@ -33,7 +33,7 @@ const DocketTypeSchema = new Schema({
                 enum: ['text', 'textarea', 'number', 'date', 'select', 'checkbox','files','address']
             },
             required: { type: Boolean, default: false },
-            validate: { type: String, default: null },
+            validation: { type: String, default: null },
             placeholder: { type: String },
             options: [
                 {
