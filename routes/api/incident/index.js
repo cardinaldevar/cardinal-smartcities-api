@@ -3681,6 +3681,7 @@ router.post('/report', [auth, [
             { $unwind: { path: '$sourceInfo', preserveNullAndEmptyArrays: true } },
             { $project: { _id: 0, id: { $ifNull: ['$sourceInfo.name', 'unknown'] }, label: { $ifNull: ['$sourceInfo.label', 'Desconocido'] }, value: '$value' } }
         ];
+        
 
         const linePipeline = [
             { $match: matchConditions },
@@ -3717,15 +3718,43 @@ router.post('/report', [auth, [
                 }
             }
         ];
+
+        const zonePipeline = [
+                { $match: matchConditions },
+                { $match: { zone: { $ne: null } } },
+                { $group: { _id: '$zone', value: { $sum: 1 } } },
+                { $project: { _id: 0, id: '$_id', value: '$value' } }
+            ];
         
         // 5. Execute all pipelines in parallel
-        const [bar, pie ] = await Promise.all([ // eliminado line
+        const [bar, pie,zoneData ] = await Promise.all([ // eliminado line
             Docket.aggregate(barPipeline),
             Docket.aggregate(piePipeline),
           //  Docket.aggregate(linePipeline)
+            Docket.aggregate(zonePipeline)
         ]);
 
-        res.json({ bar, pie, status: targetStatus });
+        const zoneIds = zoneData.map(z => z.id);
+        const zoneFeatures = await Zone.find({ _id: { $in: zoneIds } }).select('name location').lean();
+        const features = zoneFeatures.map(zone => ({
+                type: 'Feature',
+                id: zone._id.toString(),
+                properties: {
+                    name: zone.name,
+                },
+                geometry: zone.location
+            }));
+
+        res.json({ 
+            bar, pie, 
+            zone: {
+                data: zoneData,
+                features: {
+                    type: 'FeatureCollection',
+                    features: features
+                }
+            },
+            status: targetStatus });
 
     } catch (error) {
         console.error("Error en el endpoint /report:", error);
