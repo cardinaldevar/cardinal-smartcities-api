@@ -146,7 +146,7 @@ const sendNewDocketEmail = async (docketData) => {
     const { company, email } = docketData;
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getNewDocketHtmlTemplate({ ...docketData, ...companyInfo });
-    const subject = `Confirmación de Legajo #${docketData.docketId}`;
+    const subject = `Confirmación de Legajo #${docketData.docketId} - ${companyInfo.companyName}`;
     return sendEmail([email], subject, html);
 };
 
@@ -155,7 +155,7 @@ const sendInternalAssignedDocketEmail = async (docketData) => {
     if (!emails || emails.length === 0) return;
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getInternalAssignedDocketHtmlTemplate({ ...docketData, ...companyInfo });
-    const subject = `Legajo Asignado #${docketData.docketId}`;
+    const subject = `Legajo Asignado #${docketData.docketId} - ${companyInfo.companyName}`;
     return sendEmail(emails, subject, html, { useBcc: true });
 };
 
@@ -163,7 +163,7 @@ const sendNeighborAssignedDocketEmail = async (docketData) => {
     const { company, email } = docketData;
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getNeighborAssignedDocketHtmlTemplate({ ...docketData, ...companyInfo });
-    const subject = `Actualización de tu Legajo #${docketData.docketId}`;
+    const subject = `Actualización de tu Legajo #${docketData.docketId} - ${companyInfo.companyName}`;
     return sendEmail([email], subject, html);
 };
 
@@ -193,7 +193,7 @@ const sendInProgressDocketEmail = async (docketData) => {
     const { company, email } = docketData;
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getInProgressDocketHtmlTemplate({ ...docketData, ...companyInfo });
-    const subject = `Legajo #${docketData.docketId} está En Progreso`;
+    const subject = `Legajo #${docketData.docketId} está En Progreso - ${companyInfo.companyName}`;
     return sendEmail([email], subject, html);
 };
 
@@ -250,7 +250,7 @@ const sendNewSubscriberEmail = async (docketData) => {
     const { company, email } = docketData;
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getNewSubscriberHtmlTemplate({ ...docketData, ...companyInfo });
-    const subject = `Suscripción al Reclamo #${docketData.docketId}`;
+    const subject = `Suscripción al Reclamo #${docketData.docketId} - ${companyInfo.companyName}`;
     return sendEmail([email], subject, html);
 };
 
@@ -279,7 +279,7 @@ const sendOnHoldDocketEmail = async (docketData) => {
     const { company, email } = docketData;
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getOnHoldDocketHtmlTemplate({ ...docketData, ...companyInfo });
-    const subject = `Legajo #${docketData.docketId} se encuentra observado`;
+    const subject = `Legajo #${docketData.docketId} se encuentra observado - ${companyInfo.companyName}`;
     return sendEmail([email], subject, html);
 };
 
@@ -309,7 +309,7 @@ const sendResolvedDocketEmail = async (docketData) => {
     const { company, email } = docketData;
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getResolvedDocketHtmlTemplate({ ...docketData, ...companyInfo });
-    const subject = `Tu Legajo #${docketData.docketId} ha sido Resuelto`;
+    const subject = `Tu Legajo #${docketData.docketId} ha sido Resuelto - ${companyInfo.companyName}`;
     return sendEmail([email], subject, html);
 };
 
