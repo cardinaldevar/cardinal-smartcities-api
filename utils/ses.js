@@ -1,5 +1,6 @@
 const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 const Company = require('../models/Company');
+const IncidentProfile = require('../models/IncidentProfile');
 const { getURLS3 } = require("./s3.js");
 
 const sesClient = new SESClient({
@@ -144,6 +145,14 @@ const getCompanyDataForEmail = async (companyId) => {
 
 const sendNewDocketEmail = async (docketData) => {
     const { company, email } = docketData;
+
+    // Check user's notification preference in IncidentProfile
+    const profile = await IncidentProfile.findOne({ email }).select('notify').lean();
+    if (profile && profile.notify === false) {
+        console.log(`📧 Email for New Docket #${docketData.docketId} skipped for ${email} due to user's notification preference.`);
+        return; // Do not send email
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getNewDocketHtmlTemplate({ ...docketData, ...companyInfo });
     const subject = `Confirmación de Legajo #${docketData.docketId} - ${companyInfo.companyName}`;
@@ -153,14 +162,41 @@ const sendNewDocketEmail = async (docketData) => {
 const sendInternalAssignedDocketEmail = async (docketData) => {
     const { company, emails } = docketData;
     if (!emails || emails.length === 0) return;
+
+    // Find all profiles matching the emails and select their notify status
+    const profiles = await IncidentProfile.find({ email: { $in: emails } }).select('email notify').lean();
+    
+    // Create a set of emails that have notifications disabled
+    const disabledEmails = new Set(
+        profiles
+            .filter(p => p.notify === false)
+            .map(p => p.email)
+    );
+
+    // Filter the original emails list to exclude those with notifications disabled
+    const emailsToSend = emails.filter(email => !disabledEmails.has(email));
+
+    if (emailsToSend.length === 0) {
+        console.log(`📧 Email for Internal Assigned Docket #${docketData.docketId} skipped. No recipients with notifications enabled.`);
+        return;
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getInternalAssignedDocketHtmlTemplate({ ...docketData, ...companyInfo });
     const subject = `Legajo Asignado #${docketData.docketId} - ${companyInfo.companyName}`;
-    return sendEmail(emails, subject, html, { useBcc: true });
+    return sendEmail(emailsToSend, subject, html, { useBcc: true });
 };
 
 const sendNeighborAssignedDocketEmail = async (docketData) => {
     const { company, email } = docketData;
+
+    // Check user's notification preference in IncidentProfile
+    const profile = await IncidentProfile.findOne({ email }).select('notify').lean();
+    if (profile && profile.notify === false) {
+        console.log(`📧 Email for Neighbor Assigned Docket #${docketData.docketId} skipped for ${email} due to user's notification preference.`);
+        return; // Do not send email
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getNeighborAssignedDocketHtmlTemplate({ ...docketData, ...companyInfo });
     const subject = `Actualización de tu Legajo #${docketData.docketId} - ${companyInfo.companyName}`;
@@ -191,6 +227,14 @@ const getInProgressDocketHtmlTemplate = (docketData) => {
 
 const sendInProgressDocketEmail = async (docketData) => {
     const { company, email } = docketData;
+
+    // Check user's notification preference in IncidentProfile
+    const profile = await IncidentProfile.findOne({ email }).select('notify').lean();
+    if (profile && profile.notify === false) {
+        console.log(`📧 Email for In Progress Docket #${docketData.docketId} skipped for ${email} due to user's notification preference.`);
+        return; // Do not send email
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getInProgressDocketHtmlTemplate({ ...docketData, ...companyInfo });
     const subject = `Legajo #${docketData.docketId} está En Progreso - ${companyInfo.companyName}`;
@@ -221,6 +265,14 @@ const getNewProfileHtmlTemplate = (profileData) => {
 
 const sendNewProfileEmail = async (profileData) => {
     const { company, email } = profileData;
+
+    // Check user's notification preference in IncidentProfile
+    const profile = await IncidentProfile.findOne({ email }).select('notify').lean();
+    if (profile && profile.notify === false) {
+        console.log(`📧 Email for New Profile for ${email} skipped due to user's notification preference.`);
+        return; // Do not send email
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getNewProfileHtmlTemplate({ ...profileData, ...companyInfo });
     const subject = `¡Bienvenido/a a ${companyInfo.companyName}!`;
@@ -248,6 +300,14 @@ const getNewSubscriberHtmlTemplate = (docketData) => {
 
 const sendNewSubscriberEmail = async (docketData) => {
     const { company, email } = docketData;
+
+    // Check user's notification preference in IncidentProfile
+    const profile = await IncidentProfile.findOne({ email }).select('notify').lean();
+    if (profile && profile.notify === false) {
+        console.log(`📧 Email for New Subscriber to Docket #${docketData.docketId} for ${email} skipped due to user's notification preference.`);
+        return; // Do not send email
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getNewSubscriberHtmlTemplate({ ...docketData, ...companyInfo });
     const subject = `Suscripción al Reclamo #${docketData.docketId} - ${companyInfo.companyName}`;
@@ -277,6 +337,14 @@ const getOnHoldDocketHtmlTemplate = (docketData) => {
 
 const sendOnHoldDocketEmail = async (docketData) => {
     const { company, email } = docketData;
+
+    // Check user's notification preference in IncidentProfile
+    const profile = await IncidentProfile.findOne({ email }).select('notify').lean();
+    if (profile && profile.notify === false) {
+        console.log(`📧 Email for On Hold Docket #${docketData.docketId} for ${email} skipped due to user's notification preference.`);
+        return; // Do not send email
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getOnHoldDocketHtmlTemplate({ ...docketData, ...companyInfo });
     const subject = `Legajo #${docketData.docketId} se encuentra observado - ${companyInfo.companyName}`;
@@ -307,6 +375,14 @@ const getResolvedDocketHtmlTemplate = (docketData) => {
 
 const sendResolvedDocketEmail = async (docketData) => {
     const { company, email } = docketData;
+
+    // Check user's notification preference in IncidentProfile
+    const profile = await IncidentProfile.findOne({ email }).select('notify').lean();
+    if (profile && profile.notify === false) {
+        console.log(`📧 Email for Resolved Docket #${docketData.docketId} for ${email} skipped due to user's notification preference.`);
+        return; // Do not send email
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getResolvedDocketHtmlTemplate({ ...docketData, ...companyInfo });
     const subject = `Tu Legajo #${docketData.docketId} ha sido Resuelto - ${companyInfo.companyName}`;
@@ -333,6 +409,14 @@ const getNewPasswordHtmlTemplate = (resetData) => {
 
 const sendNewPasswordEmail = async (resetData) => {
     const { company, email, newPassword } = resetData;
+
+    // Check user's notification preference in IncidentProfile
+    const profile = await IncidentProfile.findOne({ email }).select('notify').lean();
+    if (profile && profile.notify === false) {
+        console.log(`📧 Email for New Password for ${email} skipped due to user's notification preference.`);
+        return; // Do not send email
+    }
+
     const companyInfo = await getCompanyDataForEmail(company);
     const html = getNewPasswordHtmlTemplate({ ...resetData, ...companyInfo });
     const subject = `Tu nueva contraseña para ${companyInfo.companyName}`;
