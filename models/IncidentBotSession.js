@@ -8,6 +8,10 @@ const IncidentBotSessionSchema = new mongoose.Schema({
         unique: true,
         index: true 
     },
+    company: { 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'company' 
+    },
 
     // Relación opcional con el Perfil (se llena cuando logramos identificarlo/registrarlo)
     profile: { 
@@ -27,6 +31,10 @@ const IncidentBotSessionSchema = new mongoose.Schema({
     buffer: { 
         type: mongoose.Schema.Types.Mixed, 
         default: {} 
+    },
+    details: {
+        type: mongoose.Schema.Types.Mixed,
+        default: {}
     }
 
 }, { 

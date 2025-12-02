@@ -1458,199 +1458,112 @@ router.post('/docket', auth, upload.array('files', 5), async (req, res) => {
         let data;
 
         // The client is sending the JSON payload in a single field in the FormData.
-
         // We find the first key in req.body and assume it's our JSON string.
 
         if (req.body && Object.keys(req.body).length > 0) {
 
             const dataField = Object.keys(req.body)[0];
-
             data = JSON.parse(req.body[dataField]);
 
         } else {
-
             return res.status(400).json({ errors: [{ msg: 'Request body is empty or does not contain the expected data field.' }] });
-
         }
 
-
-
         const {
-
             profile: profileObj,
-
             docket_area,
-
             docket_type: docketTypeObj,
-
             description,
-
             source: sourceObj,
-
             details: detailsFromData,
-
             docket_type_stage,
-
             sentiments,
-
             status
-
         } = data;
 
-
-
         // Manual validation of inner fields
-
         const validationErrors = [];
 
         if (!description) validationErrors.push({ param: 'description', msg: 'La descripción es requerida' });
-
         if (!profileObj || !mongoose.Types.ObjectId.isValid(profileObj._id)) validationErrors.push({ param: 'profile', msg: 'Perfil o ID de perfil no válido' });
-
         if (!docketTypeObj || !mongoose.Types.ObjectId.isValid(docketTypeObj._id)) validationErrors.push({ param: 'docket_type', msg: 'Tipo de legajo o ID de tipo no válido' });
-
         if (!sourceObj || !mongoose.Types.ObjectId.isValid(sourceObj.value)) validationErrors.push({ param: 'source', msg: 'Fuente o ID de fuente no válido' });
-
         if (docket_area) {
-
             if (!Array.isArray(docket_area)) {
-
                 validationErrors.push({ param: 'docket_area', msg: 'El área del legajo debe ser un array' });
-
             } else {
-
                 for (const item of docket_area) {
-
                     if (!mongoose.Types.ObjectId.isValid(item._id)) {
-
                         validationErrors.push({ param: 'docket_area._id', msg: 'ID de área no válido en el array' });
-
                     }
-
                 }
-
             }
-
         }
 
         if (validationErrors.length > 0) {
-
             return res.status(400).json({ errors: validationErrors });
-
         }
 
-
-
-
-
         let details = detailsFromData;
-
         const companyId = new mongoose.Types.ObjectId(req.user.company);
-
-
 
         if (req.files && req.files.length > 0) {
 
             const bucketName = process.env.S3_BUCKET_INCIDENT;
-
             if (!bucketName) {
-
                 console.error("S3_BUCKET_INCIDENT environment variable not set.");
-
                 return res.status(500).send('Error de configuración del servidor.');
-
             }
 
             const uploadPromises = req.files.map(file => uploadFileToS3(file, bucketName, 'docket'));
-
             const uploadedFiles = await Promise.all(uploadPromises);
 
             if (!details) details = {};
-
             details.files = uploadedFiles;
 
         }
 
-
-
         const profileId = profileObj._id;
-
         const docketTypeId = docketTypeObj._id;
-
         const sourceId = sourceObj.value;
-
         let docket_type_predicted;
-
         let initialSentiment;
-
-
-
         let address = null;
-
         let location = null;
 
-
-
         if (details && details.address && details.address.value && details.address.location) {
-
             address = details.address.value;
-
             location = details.address.location;
-
         }
-
-
 
         if(docket_type_stage != 'predict'){
 
             const url = `${process.env.TIGRESIRVE_NLP_URL}/predict`;
-
             const response = await axios.post(url, { text: description });
 
-
-
             if (response.data.categories && response.data.categories.length > 0) {
-
                 const topPrediction = response.data.categories[0];
-
                 docket_type_predicted = {
-
                     refId: topPrediction._id,
-
                     name: topPrediction.category,
-
                     score: topPrediction.score
-
                 };
 
             }
 
-          
-
             if(response.data.sentiment){
 
                 const sentimentData = response.data.sentiment;
-
                 initialSentiment = {
-
                     analysisStage: 'initial', 
-
                     sentiment: sentimentData.tone,
-
                     sentimentScore: {
-
                         positive: sentimentData.scores.POSITIVE,
-
                         negative: sentimentData.scores.NEGATIVE,
-
                         neutral: sentimentData.scores.NEUTRAL,
-
                         mixed: sentimentData.scores.MIXED
-
                     }
-
                 };
-
             }
 
         } else {
@@ -1658,123 +1571,70 @@ router.post('/docket', auth, upload.array('files', 5), async (req, res) => {
             const sentimentData = sentiments[0];
 
             initialSentiment = {
-
                 analysisStage: 'initial',
-
                 sentiment: sentimentData.tone,
-
                 sentimentScore: {
-
                     positive: sentimentData.scores.POSITIVE,
-
                     negative: sentimentData.scores.NEGATIVE,
-
                     neutral: sentimentData.scores.NEUTRAL,
-
                     mixed: sentimentData.scores.MIXED
-
                 }
-
             };
 
-
-
             docket_type_predicted = {
-
                 refId:docketTypeObj._id,
-
                 name:docketTypeObj.category,
-
                 score:docketTypeObj.score
-
             }
-
         }
-
-
 
         const docketAreaIds = docket_area ? docket_area.map(area => new mongoose.Types.ObjectId(area._id)) : [];
 
-
-
         const newDocket = new Docket({
-
             company: companyId,
-
             profile: profileId,
-
             docket_area: docketAreaIds,
-
             docket_type: docketTypeId,
-
             description,
-
             source: sourceId,
-
             details,
-
             address,
-
             location,
-
             sentiments: [initialSentiment],
-
             docket_type_predicted,
-
             status
-
         });
 
 
 
         await newDocket.save();
 
-
-
         const initialHistoryEntry = new DocketHistory({
-
             docket: newDocket._id,      
-
             user: req.user.id, 
-
             userModel: 'users',
-
             status,        
-
             content: 'Legajo iniciado'
-
         });
-
-        
 
         await initialHistoryEntry.save();
 
-
-
         res.status(201).json(newDocket.docketId);
-
-
 
     } catch (err) {
 
         console.error(err.message);
 
         if (err.name === 'SyntaxError') {
-
             return res.status(400).json({ errors: [{ msg: 'The data payload is not valid JSON.' }] });
-
         }
 
         if (err.kind === 'ObjectId') {
-
             return res.status(400).json({ errors: [{ msg: 'ID con formato incorrecto' }] });
-
         }
 
         res.status(500).send('Error del servidor');
-
     }
-
 });
 
 

@@ -556,11 +556,22 @@ router.post('/validate', [
 
     const { key, value } = req.body;
 
+    let processedValue = value;
+    // --- INICIO: Lógica para padding de 'value' ---
+    // Esta lógica se aplica si 'key' es un campo específico que requiere un valor de 10 dígitos.
+    // **IMPORTANTE:** Debes especificar para qué `key` se aplica esta regla.
+    // Por ejemplo, si 'key' fuera 'numeroDeTicket', entonces sería `if (key === 'numeroDeTicket' ...)`
+    // Si el 'value' es una cadena numérica y tiene menos de 10 dígitos, se rellena con ceros a la izquierda.
+    if (key === 'abl' && typeof value === 'string' && value.length < 10 && /^\d+$/.test(value)) {
+        processedValue = value.padStart(10, '0');
+    }
+    // --- FIN: Lógica para padding de 'value' ---
+
     try {
         const validationRule = await IncidentDocketTypeValidation.findOne({
             company: companyId,
             key,
-            value
+            value: processedValue // Usa el valor procesado
         });
 
         if (validationRule) {

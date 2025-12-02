@@ -7,7 +7,7 @@ async function predictCategory(text) {
         const url = `${process.env.TIGRESIRVE_NLP_URL}/predict`;
         const response = await axios.post(url, { text });
         const predictionPayload = response.data;
-
+        
         if (!predictionPayload.categories || predictionPayload.categories.length === 0) {
             return null; // O manejar error
         }
@@ -44,7 +44,8 @@ async function predictCategory(text) {
         // Devolvemos solo lo que le importa al Bot: la mejor predicción y la lista completa
         return {
             bestMatch: enrichedCategories.length > 0 ? enrichedCategories[0] : null,
-            allOptions: enrichedCategories
+            allOptions: enrichedCategories,
+            sentiment:predictionPayload.sentiment
         };
 
     } catch (error) {
