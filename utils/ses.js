@@ -90,12 +90,21 @@ const getNeighborAssignedDocketHtmlTemplate = (docketData) => {
 // --- Generic Email Logic ---
 
 const sendEmail = async (addresses, subject, htmlData, options = { useBcc: false }) => {
+    // Filtrar direcciones de correo inválidas.
+    const validAddresses = addresses.filter(email => email && !email.endsWith('@fakemail.com'));
+
+    // Si no hay direcciones válidas, no hacer nada y loggear.
+    if (validAddresses.length === 0) {
+        console.log(`📧 Email sending skipped for subject "${subject}". No valid recipients found or all were invalid.`);
+        return;
+    }
+
     const destination = {};
     if (options.useBcc) {
-        destination.BccAddresses = addresses;
+        destination.BccAddresses = validAddresses;
         destination.ToAddresses = [process.env.SES_FROM_EMAIL]; // BCC requires at least one TO address.
     } else {
-        destination.ToAddresses = addresses;
+        destination.ToAddresses = validAddresses;
     }
 
     const params = {
@@ -110,7 +119,7 @@ const sendEmail = async (addresses, subject, htmlData, options = { useBcc: false
         const command = new SendEmailCommand(params);
         const response = await sesClient.send(command);
         const recipientType = options.useBcc ? 'Bcc' : 'To';
-        console.log(`📧 Email sent successfully via ${recipientType} to ${addresses.length} recipient(s) with subject "${subject}"`, response.MessageId);
+        console.log(`📧 Email sent successfully via ${recipientType} to ${validAddresses.length} recipient(s) with subject "${subject}"`, response.MessageId);
         return response;
     } catch (error) {
         console.error("Error sending email:", error);

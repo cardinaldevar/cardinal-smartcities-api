@@ -915,13 +915,15 @@ router.post('/profile', [auth, [
         notify
     } = req.body;
     console.log(JSON.stringify(req.body))
+    
     try {
+
         let email = reqEmail;
 
         // Generate fictitious email if not provided
         if (!email || email.trim() === '') {
             const timestamp = Date.now();
-            email = `dni_${dni}_${timestamp}@fakemail.com`;
+            email = `${dni}_${timestamp}@fakemail.com`;
             console.log(`Generated fictitious email: ${email}`);
         }
 
@@ -998,7 +1000,7 @@ router.post('/profile', [auth, [
        //add funcion send email
        if (email) {
         try {
-            /*
+          
           await sendNewProfileEmail({
             email,
             name,
@@ -1006,7 +1008,7 @@ router.post('/profile', [auth, [
             dni,
             password, // The plain text password
             company: companyId
-          });*/
+          });
 
         } catch (emailError) {
           console.error("Error sending new profile email:", emailError);
