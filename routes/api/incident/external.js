@@ -153,7 +153,8 @@ router.get('/docket', authIncident, async (req, res) => {
       $or: [
         { profile: req.user.id },
         { 'subscribers.profile': req.user.id }
-      ]
+      ],
+      status: { $nin: ['closed', 'cancelled', 'archived', 'deleted'] }
     })
     .sort({ createdAt: -1 })
     .limit(20)
