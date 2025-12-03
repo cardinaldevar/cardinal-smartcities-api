@@ -42,11 +42,25 @@ exports.BloodType = [
     "UY":"http://ec2-18-219-5-50.us-east-2.compute.amazonaws.com:5000"
 }
 
+
+
+ exports.osrmService = {
+    "AR": "http://ec2-18-219-5-50.us-east-2.compute.amazonaws.com:5000",
+    "ES":"ec2-18-118-84-20.us-east-2.compute.amazonaws.com:5000",
+    "UY": "http://ec2-13-59-121-117.us-east-2.compute.amazonaws.com:5000"
+ }
+
+ exports.nominatimService = {
+    //http://ec2-3-22-95-71.us-east-2.compute.amazonaws.com/nominatim/search
+    "AR": "http://ec2-3-22-95-71.us-east-2.compute.amazonaws.com/nominatim",
+   // "ES":"ec2-18-118-84-20.us-east-2.compute.amazonaws.com:5000",
+    "UY": "http://ec2-3-142-249-188.us-east-2.compute.amazonaws.com"
+ }
+
 exports.evaluationTypeDescription = {
     'in':'Ingreso de zona',
     'out':'Fuera de zona'
 }
-
 
 exports.statusIncident = [
   { value: 'new', label: 'Nuevo', color: '#3B82F6' }, // Azul

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const mongoose = require('mongoose');
+const https = require('https');
 
 // --- MODELOS (Ajusta las rutas según tu estructura) ---
 const IncidentBotSession = require('../../models/IncidentBotSession'); 
@@ -10,8 +11,12 @@ const IncidentDocketType = require('../../models/IncidentDocketType');
 const IncidentDocket = require('../../models/IncidentDocket');
 const DocketSource = require('../../models/IncidentDocketSource');
 const DocketHistory = require('../../models/IncidentDocketHistory');
+const Company = require('../../models/Company');
+const CONS = require('../../utils/CONS');
 const verifySignature = require('../../middleware/whatsappWebHook');
 const {predictCategory} = require('../../utils/nlp');
+const { sendNewProfileEmail } = require('../../utils/ses');
+const bcrypt = require('bcryptjs');
 
 // --- CONFIGURACIÓN ---
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -19,6 +24,11 @@ const PHONE_ID = process.env.TIGRESIRVE_WHATSAPP_PHONE_ID;
 const API_TOKEN = process.env.TIGRESIRVE_WHATSAPP_API_TOKEN;
 const NLP_URL = process.env.TIGRESIRVE_NLP_URL;
 const WHATSAPP_SOURCE_ID = '68e7df621c059a57c50d6a36'; // ID de la fuente 'WhatsApp'
+
+// Mapa para asociar el número de teléfono del bot a una compañía
+const companyPhoneMapping = {
+    '5491176011378': '68e9c3977c6f1f402e7b91e0' //phone tigre sirve
+};
 
 // ==================================================================
 // 2. SERVICIOS AUXILIARES (Envío de mensajes y NLP)
@@ -84,7 +94,7 @@ async function sendInteractiveList(to, headerText, bodyText, buttonText, section
 // ==================================================================
 // 3. LOGICA DE NEGOCIO / MÁQUINA DE ESTADOS (El Cerebro)
 // ==================================================================
-async function handleBotFlow(phone, messageData, userName) {
+async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
     // Extraer contenido del mensaje de forma unificada
     const currentText = (messageData && (messageData.type === 'text' || messageData.type === 'interactive')) ? messageData.body : null;
     const currentLocation = (messageData && messageData.type === 'location') ? messageData.location : null;
@@ -101,17 +111,27 @@ async function handleBotFlow(phone, messageData, userName) {
             await sendMessage(phone, 'Su usuario está inactivo.');
             return; 
         }
+
+        // Determinar la compañía: usar la del perfil existente o la del mapa del bot.
+        const companyForSession = existingProfile ? existingProfile.company : (companyPhoneMapping[botPhoneNumber] || null);
         
         session = await IncidentBotSession.create({
             whatsappId: phone,
             profile: existingProfile ? existingProfile._id : null,
-            company: existingProfile ? existingProfile.company : null, // Se agrega el campo company aquí
+            company: companyForSession,
             step: existingProfile ? 'MAIN_MENU' : 'REGISTER_START' 
         });
 
         // Mensaje de bienvenida inmediato si es sesión nueva
         if (session.step === 'REGISTER_START') {
-            await sendMessage(phone, `¡Hola ${userName || ''}! 👋 Bienvenido a Tigre Sirve.\n\nPara poder tomar tus reclamos, necesito registrarte.\n¿Cuál es tu *Nombre*?`);
+            let companyName = 'Cardinal'; // Fallback
+            if (session.company) {
+                const company = await Company.findById(session.company).select('name').lean();
+                if (company) {
+                    companyName = company.name;
+                }
+            }
+            await sendMessage(phone, `¡Hola ${userName || ''}! 👋 Bienvenido a ${companyName}.\n\nPara poder tomar tus reclamos, necesito registrarte.\n¿Cuál es tu *Nombre*?`);
             session.step = 'REGISTER_NAME';
             await session.save();
             return;
@@ -157,28 +177,167 @@ async function handleBotFlow(phone, messageData, userName) {
                 await sendMessage(phone, "El DNI solo debe contener números. Intenta de nuevo:");
                 return;
             }
+
+            // --- Inicio de la Validación ---
+            const existingProfileByDni = await IncidentProfile.findOne({ dni: currentText, company: session.company });
+
+            if (existingProfileByDni) {
+                await sendMessage(phone, "Ya existe un usuario registrado con ese DNI. Si crees que es un error, por favor contacta a soporte.");
+                return; 
+            }
+            // --- Fin de la Validación ---
+
             session.buffer.tempDni = currentText;
-            session.step = 'REGISTER_EMAIL';
+            session.step = 'REGISTER_TRAMITE'; // <--- NUEVO PASO
             session.markModified('buffer');
-            await sendMessage(phone, "Por último, ingresá tu *Email*:");
+            await sendMessage(phone, "Gracias. Ahora, por favor, ingresá tu *Número de Trámite* del DNI.\n\nEl número de trámite del DNI argentino es un código de 11 dígitos que sirve para validar la identidad en gestiones en línea. Es importante para priorizar tus reclamos.");
             break;
 
+        case 'REGISTER_TRAMITE':
+            if (!/^\d{11}$/.test(currentText)) {
+                await sendMessage(phone, "El Número de Trámite debe contener exactamente 11 dígitos. Por favor, intenta de nuevo:");
+                return;
+            }
+
+            session.buffer.tempTramite = currentText; // Guardar número de trámite
+            session.step = 'REGISTER_GENDER';
+            session.markModified('buffer');
+
+            await sendInteractiveButton(phone, 
+                "Para validar tu identidad, por favor selecciona tu género:",
+                [{id: 'male', title: 'Masculino'}, {id: 'female', title: 'Femenino'}]
+            );
+            break;
+
+        case 'REGISTER_GENDER':
+            const gender = currentText; // 'male' o 'female'
+            if (gender !== 'male' && gender !== 'female') {
+                await sendMessage(phone, "Por favor, selecciona una de las opciones usando los botones.");
+                return;
+            }
+            session.buffer.tempGender = gender;
+            session.markModified('buffer');
+
+            await sendMessage(phone, "Validando identidad... ⏳");
+
+            try {
+                const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+                const genderForApi = gender === 'male' ? 'M' : 'F';
+                
+                const dniValidationPayload = {
+                    token: process.env.token_service_tigre, 
+                    dni: session.buffer.tempDni,
+                    sexo: genderForApi,
+                    id_tramite: session.buffer.tempTramite
+                };
+        
+                const headers = { 'Content-Type': 'application/json' };
+                const dniApiUrl = 'https://www.tigre.gob.ar/Restserver/vigencia_dni';
+                const dniValidationResponse = await axios.post(dniApiUrl, dniValidationPayload, { headers, httpsAgent });
+                
+                if (dniValidationResponse.data.error || dniValidationResponse.data.data.mensaje !== 'DNI VIGENTE') {
+                    // --- CASO FALLIDO ---
+                    await sendMessage(phone, 'No pudimos validar tu identidad. Continuaremos con el registro, pero tu perfil no estará verificado.');
+                    session.buffer.isVerified = false;
+                } else {
+                    // --- CASO EXITOSO ---
+                    session.buffer.isVerified = true;
+                    await sendMessage(phone, "¡Identidad validada! 👍");
+                }
+
+                // --- SIGUIENTE PASO (COMÚN A AMBOS CASOS) ---
+                session.step = 'REGISTER_EMAIL';
+                session.markModified('buffer');
+                await sendMessage(phone, "\n\nAhora ingresá tu *Email*:\nEs importante que sea un email válido para que te lleguen las notificaciones de resolución.");
+
+            } catch (error) {
+                console.error("Error en validación de DNI:", error.message);
+                await sendMessage(phone, "Hubo un problema con el servicio de validación. Continuaremos con el registro, pero tu perfil no estará verificado.");
+                
+                session.buffer.isVerified = false;
+                session.step = 'REGISTER_EMAIL';
+                session.markModified('buffer');
+                await sendMessage(phone, "\n\nAhora ingresá tu *Email*:\nEs importante que sea un email válido para que te lleguen las notificaciones de resolución.");
+            }
+            break;
+			
         case 'REGISTER_EMAIL':
-             const newProfile = await new IncidentProfile({
+            // --- Inicio de la Validación de Formato de Email ---
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(currentText)) {
+                await sendMessage(phone, "El formato del email no parece válido. Por favor, asegúrate de que sea como 'nombre@ejemplo.com' e intenta de nuevo.");
+                return;
+            }
+            // --- Fin de la Validación de Formato de Email ---
+
+            // --- Inicio de la Validación de Email Existente ---
+            const existingProfileByEmail = await IncidentProfile.findOne({ email: currentText, company: session.company });
+
+            if (existingProfileByEmail) {
+                await sendMessage(phone, "Este email ya está registrado con otro usuario. Por favor, ingresa un email diferente o contacta a soporte.");
+                return;
+            }
+            // --- Fin de la Validación de Email Existente ---
+
+            session.buffer.tempEmail = currentText; // Guardar email en el buffer
+            session.step = 'REGISTER_PASSWORD'; // Siguiente paso: contraseña
+            session.markModified('buffer');
+             
+            await sendMessage(phone, "Ahora, por favor crea una contraseña. Debe tener *al menos 6 caracteres*.");
+            break;
+
+        case 'REGISTER_PASSWORD':
+            // --- Validación de Longitud de Contraseña ---
+            if (!currentText || currentText.length < 6) {
+                await sendMessage(phone, "La contraseña es muy corta. Debe tener *al menos 6 caracteres*. Por favor, intenta de nuevo.");
+                return;
+            }
+            // --- Fin de la Validación ---
+
+            const plainTextPassword = currentText; // Guardar contraseña para el email
+
+            // Encriptar contraseña
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(plainTextPassword, salt);
+
+            const newProfile = await new IncidentProfile({
+                 company: session.company,
                  name: session.buffer.tempName,
                  last: session.buffer.tempLast,
                  dni: session.buffer.tempDni,
-                 email: currentText,
+                 transactionNumber: session.buffer.tempTramite,
+                 gender: session.buffer.tempGender,
+                 isVerified: session.buffer.isVerified || false,
+                 email: session.buffer.tempEmail,
+                 password: hashedPassword, 
                  phone: phone,
                  registerFrom: 'whatsapp'
              }).save();
              
              session.profile = newProfile._id;
+             
+             // --- Enviar Email de Bienvenida ---
+             try {
+                await sendNewProfileEmail({
+                    email: newProfile.email,
+                    name: newProfile.name,
+                    lastname: newProfile.last,
+                    dni: newProfile.dni,
+                    password: plainTextPassword,
+                    company: session.company
+                });
+                await sendMessage(phone, "¡Registro Exitoso! 🎉\n\nRevisa tu casilla de email para obtener tus datos de acceso a la plataforma.\n\nAhora sí, contame ¿cuál es tu reclamo? (Ej: 'Luz quemada en la esquina de italia al 1200')");
+             } catch (emailError) {
+                console.error("Error enviando el email de bienvenida desde el bot:", emailError.message);
+                // Si el email falla, al menos le avisamos que el registro fue exitoso.
+                await sendMessage(phone, "¡Registro Exitoso! 🎉\n\nNo pudimos enviar el email con tus datos de acceso, pero ya podés usar el bot.\n\nAhora sí, contame ¿cuál es tu reclamo? (Ej: 'Luz quemada en la esquina de italia al 1200')");
+             }
+             // --- Fin Envío de Email ---
+
              session.step = 'WAITING_CLAIM';
-             session.buffer = {};
+             session.buffer = {}; // Limpiar buffer
              session.markModified('buffer');
              
-             await sendMessage(phone, "¡Registro Exitoso! 🎉\n\nAhora sí, contame ¿cuál es tu reclamo? (Ej: 'Luz quemada en la esquina de italia al 1200')");
             break;
 
         // --- FLUJO DE RECLAMOS ---
@@ -322,11 +481,39 @@ async function handleBotFlow(phone, messageData, userName) {
                     const lng = parseFloat(currentLocation.longitude);
                     let addressText = currentLocation.address || currentLocation.name;
 
-                    // TODO: Si no viene addressText de WhatsApp, hacer geocodificación inversa con Nominatim.
-                    // if (!addressText) {
-                    //    const reverseGeocoded = await nominatim.reverse(lat, lng);
-                    //    addressText = reverseGeocoded.display_name;
-                    // }
+                    // Si WhatsApp no nos da el texto de la dirección, la buscamos nosotros.
+                    if (!addressText) {
+                        try {
+                            let countryCode = 'AR'; // Opción A: Default a Argentina
+
+                            // Si la sesión tiene una compañía, usamos su país
+                            if (session.company) {
+                                const company = await Company.findById(session.company).select('country_code'); // El schema usa 'country_code'
+                                if (company && company.country_code) {
+                                    countryCode = company.country_code;
+                                }
+                            }
+                            
+                            // Obtenemos la URL del servicio de Nominatim para ese país
+                            const nominatimUrl = CONS.nominatimService[countryCode];
+
+                            if (nominatimUrl) {
+                                // Hacemos la llamada al servicio de georeverse
+                                const url = `${nominatimUrl}/reverse?format=json&lat=${lat}&lon=${lng}`;
+                                console.log(`Geocodificando en: ${url}`);
+                                const response = await axios.get(url);
+                                
+                                if (response.data && response.data.display_name) {
+                                    addressText = response.data.display_name; // ej: "Calle Falsa 123, Springfield, Argentina"
+                                } else {
+                                    addressText = `Ubicación en lat: ${lat}, lng: ${lng}`;
+                                }
+                            }
+                        } catch (geoError) {
+                            console.error("Error en geocodificación inversa:", geoError.message);
+                            addressText = `Ubicación cercana a lat: ${lat}, lng: ${lng}`; // Fallback si el servicio falla
+                        }
+                    }
 
                     const locationObject = {
                         type: 'Point',
@@ -571,6 +758,8 @@ console.log(JSON.stringify(req.body))
                         const msg = value.messages[0];
                         const contact = value.contacts ? value.contacts[0] : {};
                         const from = msg.from;
+                        const botPhoneNumber = value.metadata?.display_phone_number; // <-- EXTRAER NÚMERO DEL BOT
+
                         console.log('-----',contact.profile.wa_id)
                         console.log('-----',msg.from)
                         let messageData = { type: msg.type };
@@ -583,14 +772,12 @@ console.log(JSON.stringify(req.body))
                         } else if (msg.type === 'location') {
                             messageData.location = msg.location; // Pasa el objeto location completo
                         } else {
-                            // Si es un tipo de mensaje no manejado (ej: imagen, video), no hacer nada
                             messageData = null; 
                         }
 
                         // No esperamos await aquí para devolver rápido el 200 OK a Meta
-                        // Solo procesamos si tenemos un objeto messageData válido
-                        if (messageData) {
-                            handleBotFlow(from, messageData, contact.profile?.name).catch(e =>
+                        if (messageData && botPhoneNumber) { // <-- VALIDAR QUE TENEMOS EL NÚMERO DEL BOT
+                            handleBotFlow(from, messageData, contact.profile?.name, botPhoneNumber).catch(e =>
                                 console.error('Error en BotFlow:', e)
                             );
                         }
