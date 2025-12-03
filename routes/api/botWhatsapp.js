@@ -15,8 +15,9 @@ const Company = require('../../models/Company');
 const CONS = require('../../utils/CONS');
 const verifySignature = require('../../middleware/whatsappWebHook');
 const {predictCategory} = require('../../utils/nlp');
-const { sendNewProfileEmail } = require('../../utils/ses');
+const { sendNewProfileEmail, sendNewPasswordEmail } = require('../../utils/ses');
 const bcrypt = require('bcryptjs');
+const { nanoid } = require('nanoid');
 
 // --- CONFIGURACIÓN ---
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -33,6 +34,16 @@ const companyPhoneMapping = {
 // ==================================================================
 // 2. SERVICIOS AUXILIARES (Envío de mensajes y NLP)
 // ==================================================================
+
+// Helper para enmascarar email
+function maskEmail(email) {
+    if (!email) return '';
+    const [localPart, domain] = email.split('@');
+    if (!domain) return email; 
+    const maskedLocal = localPart.length > 3 ? localPart.substring(0, 3) + '****' : localPart.substring(0, 1) + '****';
+    return `${maskedLocal}@${domain}`;
+}
+
 async function sendMessage(to, text) {
     try {
         await axios.post(`https://graph.facebook.com/v17.0/${PHONE_ID}/messages`, {
@@ -98,50 +109,67 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
     // Extraer contenido del mensaje de forma unificada
     const currentText = (messageData && (messageData.type === 'text' || messageData.type === 'interactive')) ? messageData.body : null;
     const currentLocation = (messageData && messageData.type === 'location') ? messageData.location : null;
+
+    // --- NUEVA LÓGICA: Comando de Reinicio ---
+    if (currentText && typeof currentText === 'string' && currentText.toLowerCase() === 'salir') {
+        let session = await IncidentBotSession.findOne({ whatsappId: phone });
+        if (session) {
+            await session.deleteOne();
+            await sendMessage(phone, "¡Intentemos nuevamente! Cuando quieras, escríbeme 'Hola' para empezar de nuevo.");
+            return; // Detener el procesamiento
+        } else {
+            // Si no hay sesión, pero escriben *salir, simplemente les decimos que empiecen.
+            await sendMessage(phone, "Parece que no tienes una conversación activa conmigo en este momento. Si quieres empezar, ¡solo escribe 'Hola'!");
+            return;
+        }
+    }
+    // --- FIN Comando de Reinicio ---
     
     // 1. Buscar o crear sesión
     let session = await IncidentBotSession.findOne({ whatsappId: phone });
     
     if (!session) {
-        // Buscamos si ya es un vecino registrado
-        const existingProfile = await IncidentProfile.findOne({ 'phone': phone }).select('company status'); // Seleccionamos la compañía y el estado
+        // Buscamos si ya es un vecino registrado por su teléfono
+        const existingProfile = await IncidentProfile.findOne({ 'phone': phone }).select('company status');
 
-        // Si el perfil existe pero está inactivo, no continuamos.
         if (existingProfile && existingProfile.status !== 1) {
             await sendMessage(phone, 'Su usuario está inactivo.');
             return; 
         }
 
-        // Determinar la compañía: usar la del perfil existente o la del mapa del bot.
+        // Determinar el paso inicial: si no se encuentra por teléfono, se le da a elegir.
+        const initialStep = existingProfile ? 'MAIN_MENU' : 'CHOOSE_LOGIN_OR_REGISTER';
         const companyForSession = existingProfile ? existingProfile.company : (companyPhoneMapping[botPhoneNumber] || null);
         
         session = await IncidentBotSession.create({
             whatsappId: phone,
             profile: existingProfile ? existingProfile._id : null,
             company: companyForSession,
-            step: existingProfile ? 'MAIN_MENU' : 'REGISTER_START' 
+            step: initialStep 
         });
 
-        // Mensaje de bienvenida inmediato si es sesión nueva
-        if (session.step === 'REGISTER_START') {
+        // Enviar el primer mensaje según el paso inicial
+        if (session.step === 'CHOOSE_LOGIN_OR_REGISTER') {
             let companyName = 'Cardinal'; // Fallback
             if (session.company) {
                 const company = await Company.findById(session.company).select('name').lean();
-                if (company) {
-                    companyName = company.name;
-                }
+                if (company) { companyName = company.name; }
             }
-            await sendMessage(phone, `¡Hola ${userName || ''}! 👋 Bienvenido a ${companyName}.\n\nPara poder tomar tus reclamos, necesito registrarte.\n¿Cuál es tu *Nombre*?`);
-            session.step = 'REGISTER_NAME';
-            await session.save();
-            return;
-        } else {
-            // Si ya existía, saludo de retorno
-            await sendMessage(phone, `¡Hola de nuevo ${userName || ''}! 👋 ¿En qué puedo ayudarte hoy? Escribe tu reclamo brevemente.`);
+            await sendInteractiveButton(
+                phone, 
+                `¡Hola ${userName || ''}! 👋 Bienvenido a ${companyName}.\n\nPara continuar, ¿ya tienes una cuenta o necesitas registrarte?\n\nSi en algún momento quieres reiniciar nuestra conversación, escribe 'salir'.`,
+                [
+                    {id: 'login_existing', title: '👤 Ya tengo cuenta'}, 
+                    {id: 'register_new', title: '🔑 Registrarme'},
+                    {id: 'forgot_password', title: 'Olvidé mi contraseña'}
+                ]
+            );
+        } else { // 'MAIN_MENU'
+            await sendMessage(phone, `¡Hola de nuevo ${userName || ''}! 👋 ¿En qué puedo ayudarte hoy?\n\nSi en algún momento quieres reiniciar nuestra conversación, escribe 'salir'.\n\nEscribe tu reclamo brevemente.`);
             session.step = 'WAITING_CLAIM';
             await session.save();
-            return;
         }
+        return; // Detenemos la ejecución aquí para esperar la respuesta del usuario
     }
 
     // Si la sesión ya existe y tiene un perfil, validamos que el perfil siga activo.
@@ -156,6 +184,103 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
 
     // 2. Máquina de Estados
     switch (session.step) {
+
+        // --- FLUJO DE LOGIN / REGISTRO INICIAL ---
+        case 'CHOOSE_LOGIN_OR_REGISTER':
+            if (currentText === 'login_existing') {
+                session.step = 'LOGIN_DNI';
+                await sendMessage(phone, "Entendido. Para iniciar sesión, por favor ingresa tu *DNI*:");
+            } else if (currentText === 'register_new') {
+                session.step = 'REGISTER_NAME';
+                await sendMessage(phone, "Perfecto. Para crear tu cuenta, ¿Cuál es tu *Nombre*?");
+            } else if (currentText === 'forgot_password') {
+                session.step = 'FORGOT_PASSWORD_DNI';
+                await sendMessage(phone, "Entendido. Para recuperar tu contraseña, por favor ingresa tu *DNI*:");
+            } else {
+                await sendMessage(phone, "Por favor, usa los botones para elegir una opción.");
+            }
+            break;
+
+        // --- FLUJO DE OLVIDÉ CONTRASEÑA ---
+        case 'FORGOT_PASSWORD_DNI':
+            const userToReset = await IncidentProfile.findOne({ 
+                dni: currentText, 
+                company: session.company 
+            });
+
+            if (!userToReset || userToReset.status !== 1) {
+                await sendMessage(phone, "No encontramos un usuario activo con ese DNI. Por favor, contacta a soporte si crees que es un error.");
+                await session.deleteOne(); // Terminar sesión por seguridad
+                return;
+            }
+
+            try {
+                // Generar y guardar nueva contraseña
+                const newPassword = nanoid(10);
+                const salt = await bcrypt.genSalt(10);
+                userToReset.password = await bcrypt.hash(newPassword, salt);
+                await userToReset.save();
+
+                // Enviar email con la nueva contraseña
+                await sendNewPasswordEmail({
+                    email: userToReset.email,
+                    newPassword: newPassword,
+                    company: userToReset.company
+                });
+
+                const maskedEmail = maskEmail(userToReset.email);
+                await sendMessage(phone, `✅ Se ha enviado una nueva contraseña a tu email: *${maskedEmail}*.\n\nPor favor, revisa tu correo y vuelve a iniciar la conversación para ingresar con tu nueva clave.`);
+            
+            } catch (error) {
+                console.error("Error en el flujo de olvidé contraseña:", error.message);
+                await sendMessage(phone, "Hubo un problema al procesar tu solicitud. Por favor, intenta de nuevo más tarde.");
+            }
+            
+            await session.deleteOne(); // Terminar sesión por seguridad
+            break;
+
+        // --- FLUJO DE LOGIN ---
+        case 'LOGIN_DNI':
+            session.buffer.loginDni = currentText;
+            session.step = 'LOGIN_PASSWORD';
+            session.markModified('buffer');
+            await sendMessage(phone, "Gracias. Ahora, por favor, ingresa tu *contraseña*:");
+            break;
+
+        case 'LOGIN_PASSWORD':
+
+            const userToLogin = await IncidentProfile.findOne({ 
+                dni: session.buffer.loginDni, 
+                company: session.company 
+            });
+
+            if (!userToLogin) {
+                session.step = 'LOGIN_DNI'; // Reiniciar
+                session.buffer = {};
+                session.markModified('buffer');
+                await sendMessage(phone, "No encontramos un usuario con ese DNI. Por favor, intenta de nuevo o regístrate. Ingresa tu *DNI*:");
+                return;
+            }
+
+            const isMatch = await bcrypt.compare(currentText, userToLogin.password);
+
+            if (!isMatch) {
+                // No reiniciamos el DNI para que solo reintente la contraseña
+                await sendMessage(phone, "Contraseña incorrecta. Por favor, intenta de nuevo.");
+                return; // Se queda en el mismo paso 'LOGIN_PASSWORD'
+            }
+
+            // --- ¡Login Exitoso! ---
+            userToLogin.phone = phone; // Actualizar el teléfono
+            await userToLogin.save();
+
+            session.profile = userToLogin._id;
+            session.step = 'WAITING_CLAIM';
+            session.buffer = {};
+            session.markModified('buffer');
+
+            await sendMessage(phone, `¡Hola de nuevo, ${userToLogin.name}! 👋 Sesión iniciada correctamente.\n\n¿En qué puedo ayudarte hoy? Escribe tu reclamo brevemente.`);
+            break;
         
         // --- FLUJO DE REGISTRO ---
         case 'REGISTER_NAME':
@@ -356,7 +481,7 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
                 session.step = 'CONFIRM_CATEGORY';
                 
                 await sendInteractiveButton(phone, 
-                    `Identifiqué que tu reclamo se refiere a: *${prediction.bestMatch.name}*.\n\n¿Es esto correcto?`,
+                    `Identifiqué que tu reclamo se refiere a: ${prediction.bestMatch.parent} > *${prediction.bestMatch.name}*.\n\n¿Es esto correcto?`,
                     [{id: 'confirm_yes', title: 'Sí, confirmar'}, {id: 'confirm_no', title: 'No, es otro'}]
                 );
             } else {
