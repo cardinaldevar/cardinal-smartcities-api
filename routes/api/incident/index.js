@@ -302,7 +302,33 @@ router.get('/docket/download/:id', auth, async (req, res) => {
             }
         }
 
-        // 3. Generate PDF
+        // 3. Get Mapbox Image
+        let mapImageBuffer = null;
+        const MAPBOX_ACCESS_TOKEN = process.env.MAPBOX_ACCESS_TOKEN; // Get your Mapbox token from .env
+        
+        if (!MAPBOX_ACCESS_TOKEN) {
+            console.error("MAPBOX_ACCESS_TOKEN is not set in environment variables.");
+        }
+        
+        if (MAPBOX_ACCESS_TOKEN && docket.location && docket.location.coordinates && docket.location.coordinates.length === 2 && (docket.location.coordinates[0] !== 0 || docket.location.coordinates[1] !== 0)) {
+            const [lon, lat] = docket.location.coordinates;
+            const mapWidth = 540;
+            const mapHeight = 300;
+            const zoom = 16;
+            // Construct the Mapbox Static Images API URL
+            const mapImageUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/pin-s-marker+285A98(${lon},${lat})/${lon},${lat},${zoom},0/${mapWidth}x${mapHeight}?access_token=${MAPBOX_ACCESS_TOKEN}`;
+            
+            try {
+                const response = await axios.get(mapImageUrl, { responseType: 'arraybuffer' });
+                mapImageBuffer = Buffer.from(response.data);
+            } catch (mapError) {
+                console.error("Could not fetch Mapbox image:", mapError.message);
+                // Decide if you want to stop or continue without the map
+            }
+        }
+
+
+        // 4. Generate PDF
                 const doc = new PDFDocument({
                     size: 'A4',
                     margins: { top: 90, bottom: 28.35, left: 28.35, right: 28.35 }, // 1cm sides/bottom, larger top for header
@@ -527,6 +553,35 @@ router.get('/docket/download/:id', auth, async (req, res) => {
                             .stroke();
                         doc.moveDown();
                     }
+                }
+
+                // --- Map Section ---
+                if (mapImageBuffer) {
+                    const mapSectionHeight = 250; // Estimated height for title, separator, and map
+                    if (doc.y + mapSectionHeight > doc.page.height - doc.page.margins.bottom) {
+                        doc.addPage();
+                        drawHeader();
+                        doc.y = doc.page.margins.top;
+                    } else {
+                        doc.moveDown(2);
+                    }
+
+                    doc.font('Helvetica-Bold').fontSize(9).text('Ubicación del Incidente', col1X, doc.y);
+                    doc.moveDown();
+
+                    // Separator line before the map
+                    doc.moveTo(doc.page.margins.left, doc.y)
+                       .lineTo(doc.page.width - doc.page.margins.right, doc.y)
+                       .strokeColor('#cecece')
+                       .lineWidth(0.5)
+                       .stroke();
+                    doc.moveDown();
+
+                    const mapFitWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+                    doc.image(mapImageBuffer, {
+                        fit: [mapFitWidth, 350],
+                        align: 'center'
+                    });
                 }        			        
         // 4. Finalize PDF and get buffer
         const pdfPromise = new Promise(resolve => {
@@ -552,7 +607,7 @@ router.get('/docket/download/:id', auth, async (req, res) => {
         // 6. Get a downloadable URL
         const downloadUrl = await getSignedUrlForFile(uploadedFile.key, s3Bucket, 3600); // 1 hour expiration
         
-        console.log({ downloadUrl });
+        //console.log({ downloadUrl });
         res.json({ url:downloadUrl });
 
     } catch (error) {
