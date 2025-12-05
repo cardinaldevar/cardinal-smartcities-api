@@ -749,7 +749,7 @@ router.get('/docket/name/expand', auth, async (req, res) => {
 router.get('/search', auth, async (req, res) => {
   try {
     // 1. Obtenemos el término de búsqueda desde los query params (ej: /search?q=AB123)
-    const { q: searchTerm } = req.query;
+    const { search: searchTerm } = req.query;
     const companyId = new mongoose.Types.ObjectId(req.user.company);
 
     // Si no hay término de búsqueda o es muy corto, devolvemos un array vacío
@@ -1095,32 +1095,156 @@ router.get('/profile/detail/:id', auth, async (req, res) => {
             return res.status(400).json({ msg: 'ID de perfil no válido.' });
         }
 
-        const profile = await IncidentProfile.findOne({ _id: id, company: companyId }).lean();
+        const userProfile = await IncidentProfile.findOne({ _id: id, company: companyId })
+            .select('-password')
+            .populate('company', 'logo')
+            .lean();
 
-        if (!profile) {
+        if (!userProfile) {
             return res.status(404).json({ msg: 'Perfil no encontrado.' });
         }
-
-        // Reformat the address field to match {value: address, location} structure
-        if (profile.address || profile.location) {
-            profile.address = {
-                value: profile.address || '', // Ensure value is a string or empty
-                location: profile.location || null // location object or null
-            };
-            delete profile.location; // Remove the top-level location field
-        } else {
-            profile.address = null; // If no address or location data, set address to null
+        
+        if (userProfile.avatar) {
+            // Use bucket from environment or a default
+            const bucketName = process.env.S3_BUCKET_USERS || 'cardinal-sc-argentina';
+            userProfile.avatar = await getSignedUrlForFile(userProfile.avatar, bucketName);
+        } else if (userProfile.company && userProfile.company.logo) {
+            // Fallback to company logo
+            userProfile.avatar = await getURLS3(userProfile.company.logo, 60);
         }
 
-        // Format the birth date to YYYY-MM-DD to avoid timezone issues on the front-end
-        if (profile.birth) {
-            profile.birth = moment.utc(profile.birth).format('YYYY-MM-DD');
-        }
-
-        res.json(profile);
+        res.json(userProfile);
 
     } catch (error) {
         console.error("Error fetching incident profile details:", error);
+        res.status(500).send('Error del servidor');
+    }
+});
+
+/**
+ * @route   POST api/incident/profile/detail/search
+ * @desc    Search for dockets of a specific profile with pagination and sorting
+ * @access  Private
+ */
+router.post('/profile/detail/search', auth, async (req, res) => {
+    try {
+        const { 
+            id, 
+            page = 0, 
+            pageSize = 10, 
+            sortBy 
+        } = req.body;
+        
+        const companyId = new mongoose.Types.ObjectId(req.user.company);
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'ID de perfil no válido.' });
+        }
+
+        // --- Sorting ---
+        const sortOptions = {};
+        if (sortBy && sortBy.length > 0) {
+            const sortField = sortBy[0].id;
+            const sortOrder = sortBy[0].desc ? -1 : 1;
+            sortOptions[sortField] = sortOrder;
+        } else {
+            sortOptions['updatedAt'] = -1; // Default sort
+        }
+
+        // --- Filtering Conditions ---
+        const sixMonthsAgo = moment().subtract(6, 'months').toDate();
+        const matchConditions = {
+            profile: new mongoose.Types.ObjectId(id),
+            company: companyId,
+            createdAt: { $gte: sixMonthsAgo },
+            status: { $ne: 'deleted' }
+        };
+
+        // --- Aggregation Pipeline ---
+        const pipeline = [
+            { $match: matchConditions },
+            { $sort: sortOptions },
+            {
+                $facet: {
+                    metadata: [{ $count: "totalDocs" }],
+                    data: [
+                        { $skip: page * pageSize },
+                        { $limit: pageSize },
+                        {
+                            $lookup: {
+                                from: 'incident.docket_types',
+                                localField: 'docket_type',
+                                foreignField: '_id',
+                                as: 'docket_type_info'
+                            }
+                        },
+                        {
+                            $unwind: { path: '$docket_type_info', preserveNullAndEmptyArrays: true }
+                        },
+                        {
+                            $lookup: {
+                                from: 'incident.docket_types',
+                                localField: 'docket_type_info.parent',
+                                foreignField: '_id',
+                                as: 'parent_info'
+                            }
+                        },
+                        {
+                            $unwind: { path: '$parent_info', preserveNullAndEmptyArrays: true }
+                        },
+                        {
+                            $lookup: {
+                                from: 'incident.docket_areas',
+                                localField: 'docket_area',
+                                foreignField: '_id',
+                                as: 'docket_area_info'
+                            }
+                        },
+                        {
+                            $project: {
+                                docketId: 1,
+                                description: 1,
+                                status: 1,
+                                createdAt: 1,
+                                updatedAt: 1,
+                                address: 1,
+                                docket_type: {
+                                    _id: '$docket_type_info._id',
+                                    name: '$docket_type_info.name',
+                                    parent: '$parent_info.name'
+                                },
+                                docket_area:{
+                                    $map: {
+                                        input: '$docket_area_info',
+                                        as: 'area',
+                                        in: { _id: '$$area._id', name: '$$area.name' }
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ];
+
+        const results = await Docket.aggregate(pipeline);
+        const dockets = results[0].data;
+        const totalDocs = results[0].metadata[0] ? results[0].metadata[0].totalDocs : 0;
+
+        // --- Response ---
+        res.json({
+            data: dockets,
+            total: totalDocs,
+            pagination: {
+                total: totalDocs,
+                page: page,
+                pageSize,
+                totalPages: Math.ceil(totalDocs / pageSize),
+            }
+        });
+
+    } catch (error) {
+        console.error("Error searching profile dockets:", error);
         res.status(500).send('Error del servidor');
     }
 });

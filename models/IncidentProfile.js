@@ -65,6 +65,10 @@ const IncidentProfileSchema = new Schema({
     floor: { type: String },
     door: { type: String},
     isVerified: { type: Boolean, default: false},
+    avatar: {
+        type: String,
+        default: null
+    },
     status: {
         type: Number,
         default: 1
