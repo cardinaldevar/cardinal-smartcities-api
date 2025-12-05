@@ -277,6 +277,7 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
                 } else {
                     const remainingAttempts = 3 - session.buffer.loginAttempts;
                     await sendMessage(phone, `Contraseña incorrecta. Te quedan ${remainingAttempts} intento(s) más.`);
+                    await session.save(); // Persist the session after updating the counter
                     return; // Se queda en el mismo paso 'LOGIN_PASSWORD'
                 }
             }
