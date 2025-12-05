@@ -189,6 +189,8 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
         case 'CHOOSE_LOGIN_OR_REGISTER':
             if (currentText === 'login_existing') {
                 session.step = 'LOGIN_DNI';
+                session.buffer.loginAttempts = 0; // Initialize login attempts
+                session.markModified('buffer');
                 await sendMessage(phone, "Entendido. Para iniciar sesión, por favor ingresa tu *DNI*:");
             } else if (currentText === 'register_new') {
                 session.step = 'REGISTER_NAME';
@@ -265,9 +267,18 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
             const isMatch = await bcrypt.compare(currentText, userToLogin.password);
 
             if (!isMatch) {
-                // No reiniciamos el DNI para que solo reintente la contraseña
-                await sendMessage(phone, "Contraseña incorrecta. Por favor, intenta de nuevo.");
-                return; // Se queda en el mismo paso 'LOGIN_PASSWORD'
+                session.buffer.loginAttempts = (session.buffer.loginAttempts || 0) + 1;
+                session.markModified('buffer');
+
+                if (session.buffer.loginAttempts >= 3) {
+                    await sendMessage(phone, "Has excedido el número de intentos. Por favor, intenta de nuevo más tarde o recupera tu contraseña.");
+                    await session.deleteOne(); // Terminar sesión por seguridad
+                    return;
+                } else {
+                    const remainingAttempts = 3 - session.buffer.loginAttempts;
+                    await sendMessage(phone, `Contraseña incorrecta. Te quedan ${remainingAttempts} intento(s) más.`);
+                    return; // Se queda en el mismo paso 'LOGIN_PASSWORD'
+                }
             }
 
             // --- ¡Login Exitoso! ---
@@ -276,7 +287,8 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
 
             session.profile = userToLogin._id;
             session.step = 'WAITING_CLAIM';
-            session.buffer = {};
+            session.buffer = {}; // Limpiar buffer
+            session.buffer.loginAttempts = 0; // Reset login attempts on success
             session.markModified('buffer');
 
             await sendMessage(phone, `¡Hola de nuevo, ${userToLogin.name}! 👋 Sesión iniciada correctamente.\n\n¿En qué puedo ayudarte hoy? Escribe tu reclamo brevemente.`);
