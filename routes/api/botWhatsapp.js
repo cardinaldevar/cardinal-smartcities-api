@@ -849,8 +849,23 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
                     return;
                 }
             } else {
-                await sendMessage(phone, "La opción seleccionada no es válida. Por favor, intenta describir tu problema de nuevo.");
-                session.step = 'WAITING_CLAIM';
+                // El usuario no seleccionó una opción válida de la lista.
+                await sendMessage(phone, "La opción seleccionada no es válida. Por favor, elige una de las siguientes categorías.");
+
+                // Re-enviar la lista de opciones
+                const rows = session.buffer.otherOptions.map(opt => ({
+                    id: opt._id,
+                    title: opt.name.substring(0, 24),
+                    description: (opt.parent || '').substring(0, 72)
+                }));
+
+                await sendInteractiveList(phone,
+                    'Recategorizar reclamo',
+                    'Si ninguna de estas opciones se ajusta a tu necesidad, puedes intentar escribir tu reclamo con otras palabras.',
+                    'Ver Opciones',
+                    [{ title: 'Selecciona una categoría', rows: rows }]
+                );
+                // La sesión se queda en el paso 'CHOOSE_OTHER_CATEGORY' para el siguiente intento.
             }
             break;
 
