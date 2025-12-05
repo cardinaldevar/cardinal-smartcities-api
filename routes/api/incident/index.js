@@ -1571,6 +1571,7 @@ router.post('/docket/search', auth, async (req, res) => {
             }
           },
           profile: {
+            _id: '$profile_info._id',
             name: { $concat: [
               { $ifNull: ['$profile_info.name', ''] },
               " ",
