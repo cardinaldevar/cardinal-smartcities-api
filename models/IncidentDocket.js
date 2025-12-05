@@ -27,7 +27,7 @@ const SentimentAnalysisSchema = new Schema({
     analysisStage: {
         type: String,
         required: true,
-        enum: [ 'initial', 'resolution', 'user_comment', 'manual_trigger' ]
+        enum: [ 'initial', 'resolution', 'user_comment', 'manual_trigger', 'survey' ]
     },
     sentiment: {
         type: String,
@@ -122,6 +122,10 @@ const IncidentDocketSchema = new Schema({
         }
     },
     sentiments: [SentimentAnalysisSchema],
+    surveys: [{
+        type: Schema.Types.ObjectId,
+        ref: 'IncidentDocketSurvey'
+    }],
     subscribers: [{
         _id: false,
         profile: {
