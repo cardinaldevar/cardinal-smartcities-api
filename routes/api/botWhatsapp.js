@@ -771,7 +771,8 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
             const chosenOption = session.buffer.otherOptions.find(opt => opt._id === selectedOptionId);
 
             if (chosenOption) {
-                //session.buffer.bestMatch = chosenOption; 
+                session.buffer.bestMatch = chosenOption; 
+                session.markModified('buffer');
 
                 if (chosenOption && chosenOption.fields && chosenOption.fields.length > 0) {
                     session.buffer.form_fields = chosenOption.fields;
@@ -780,26 +781,26 @@ async function handleBotFlow(phone, messageData, userName, botPhoneNumber) {
                     session.step = 'COLLECTING_FIELDS';
                     session.markModified('buffer');
                     session.markModified('details');
-
-                    const firstField = session.buffer.form_fields[0];
-                    let message = `Entendido: *"${chosenOption.name}"*.\n\nPara continuar, necesito unos datos más.\n`;
-
-                    if (firstField.key === 'address') {
-                        message += 'Por favor, envíame la ubicación exacta. Para ello, usa el botón de adjuntar (📎) y selecciona "Ubicación".';
-                    } else {
-                        message += `Por favor, ingresa *${firstField.label}*`;
-                        if (firstField.placeholder) {
-                            message += ` (Ej: ${firstField.placeholder})`;
-                        }
-                    }
-                    await sendMessage(phone, message);
-                } else {
-
+ 
+                     const firstField = session.buffer.form_fields[0];
+                     let message = `Entendido: *"${chosenOption.name}"*.\n\nPara continuar, necesito unos datos más.\n`;
+ 
+                     if (firstField.key === 'address') {
+                         message += 'Por favor, envíame la ubicación exacta. Para ello, usa el botón de adjuntar (📎) y selecciona "Ubicación".';
+                     } else {
+                         message += `Por favor, ingresa *${firstField.label}*`;
+                         if (firstField.placeholder) {
+                             message += ` (Ej: ${firstField.placeholder})`;
+                         }
+                     }
+                     await sendMessage(phone, message);
+                 } else {
+ 
                     const selectedCategory = session.buffer.bestMatch;
-                    const docketTypePredicted = {
-                        refId: selectedCategory._id,
-                        name: selectedCategory.name,
-                        score: selectedCategory.score
+                     const docketTypePredicted = {
+                         refId: selectedCategory._id,
+                         name: selectedCategory.name,
+                         score: selectedCategory.score
                     };
                     const docketData = {
                         profile: session.profile,
