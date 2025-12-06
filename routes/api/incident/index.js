@@ -1600,12 +1600,12 @@ router.post('/docket/search', auth, async (req, res) => {
           subscribers: { $size: { $ifNull: ['$subscribers', []] } }
         }
       },
+      { $sort: sortOptions },
       {
         $facet: {
           metadata: [{ $count: "totalDocs" }],
           data: [
-            { $sort: sortOptions },    
-            { $skip: page * pageSize },
+            { $skip: page *pageSize },
             { $limit: pageSize }
           ]
         }
