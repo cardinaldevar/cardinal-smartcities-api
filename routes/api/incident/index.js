@@ -9,6 +9,7 @@ const Zone = require('../../../models/Zone');
 const DocketSource = require('../../../models/IncidentDocketSource');
 const DocketType = require('../../../models/IncidentDocketType');
 const DocketHistory = require('../../../models/IncidentDocketHistory');
+const IncidentDocketReportLapses = require('../../../models/IncidentDocketReportLapses');
 const moment = require('moment-timezone');
 const https = require('https');
 const mongoose = require('mongoose');
@@ -1800,6 +1801,26 @@ router.post('/docket', auth, upload.array('files', 5), async (req, res) => {
         });
 
         await initialHistoryEntry.save();
+
+        if(docketAreaIds.length >= 1){
+
+            const currentDocketStatus = 'assigned';
+            // Para el historial, buscamos los nombres de las nuevas áreas
+            const newAreaDocs = await DocketArea.find({ '_id': { $in: docketAreaIds } }).select('name');
+            const newDocketAreaNames = newAreaDocs.map(a => a.name).join(', ') || 'Ninguna';
+
+            const historyContent = `Asignación de áreas: '${newDocketAreaNames}'.`;
+
+            const newHistory = new DocketHistory({
+                docket: newDocket._id,
+                user: req.user.id, 
+                userModel: 'users',
+                status: currentDocketStatus, 
+                content: historyContent
+            });
+            await newHistory.save();
+
+        }
 
         res.status(201).json(newDocket.docketId);
 
@@ -3801,6 +3822,212 @@ router.post('/report', [auth, [
     } catch (error) {
         console.error("Error en el endpoint /report:", error);
         res.status(500).send('Error del servidor');
+    }
+});
+
+
+// @route   POST api/incident/report/performance
+// @desc    Get performance report data for charts
+// @access  Private
+router.post('/report/performance', auth, async (req, res) => {
+    try {
+        const { monthStart, monthEnd, docket_area } = req.body;
+
+        // 1. Build the match query for the aggregation pipeline
+        const matchQuery = {};
+
+        // Handle docket area filter
+        if (docket_area && docket_area.length > 0) {
+            const initialAreaIds = docket_area.map(id => new mongoose.Types.ObjectId(id));
+            const idSearchPipeline = [
+                { $match: { _id: { $in: initialAreaIds } } },
+                { $graphLookup: { from: 'incident.docket_areas', startWith: '$_id', connectFromField: '_id', connectToField: 'parent', as: 'descendants', maxDepth: 10 } },
+                { $project: { allRelatedIds: { $concatArrays: [['$_id'], '$descendants._id'] } } },
+                { $unwind: '$allRelatedIds' },
+                { $group: { _id: '$allRelatedIds' } }
+            ];
+            const idDocs = await DocketArea.aggregate(idSearchPipeline);
+            const allIdsToFilter = idDocs.map(doc => doc._id);
+            if (allIdsToFilter.length > 0) {
+                matchQuery['_id.area'] = { $in: allIdsToFilter };
+            } else {
+                matchQuery['_id.area'] = { $in: initialAreaIds };
+            }
+        }
+        
+        // Handle date range filter
+        const dateConditions = [];
+        if (monthStart) {
+            const start = moment(monthStart, 'YYYY-MM');
+            dateConditions.push({
+                $or: [
+                    { '_id.year': { $gt: start.year() } },
+                    {
+                        '_id.year': start.year(),
+                        '_id.month': { $gte: start.month() + 1 }
+                    }
+                ]
+            });
+        }
+        if (monthEnd) {
+            const end = moment(monthEnd, 'YYYY-MM');
+            dateConditions.push({
+                $or: [
+                    { '_id.year': { $lt: end.year() } },
+                    {
+                        '_id.year': end.year(),
+                        '_id.month': { $lte: end.month() + 1 }
+                    }
+                ]
+            });
+        }
+
+        if (dateConditions.length > 0) {
+            matchQuery.$and = dateConditions;
+        }
+
+        // Month names for formatting the 'x' axis
+        const monthNames = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
+
+        // 2. Aggregation pipeline to get and format data
+        const performanceData = await IncidentDocketReportLapses.aggregate([
+            // Stage 1: Match documents based on filters
+            { $match: matchQuery },
+            
+            // Stage 2: Group by Area and Month to sum up counts across all docket types
+            {
+                $group: {
+                    _id: {
+                        area: '$_id.area',
+                        year: '$_id.year',
+                        month: '$_id.month',
+                        areaName: '$areaName'
+                    },
+                    // This 'y' value is the total docketsCount for an area in a given month.
+                    // You could change $sum to $avg and '$docketsCount' to '$avgTotalResolutionTimeHours'
+                    // to chart average resolution time instead of count.
+                    avg: { $avg: '$avgLastAssignmentToResolutionHours' },
+                    median: { $avg: '$medianLastAssignmentToResolutionHours' },
+                    p90: { $avg: '$p90LastAssignmentToResolutionHours' },
+                    docketsCount: { $sum: '$docketsCount' }
+                }
+            },
+            
+            // Stage 3: Sort to prepare for final grouping
+            {
+                $sort: {
+                    '_id.areaName': 1,
+                    '_id.year': 1,
+                    '_id.month': 1
+                }
+            },
+            
+            // Stage 4: Group by area to create the final nested structure for the chart
+            {
+                $group: {
+                    _id: '$_id.area',
+                    id: { $first: '$_id.areaName' }, // Use areaName for the 'id' field
+                    data: {
+                        $push: {
+                            x: {
+                                $concat: [
+                                    { $arrayElemAt: [monthNames, { $subtract: ['$_id.month', 1] }] },
+                                    ' ',
+                                    { $substr: [{$toString: '$_id.year'}, 2, 2] }
+                                ]
+                            },
+                            y: '$avg',
+                            median: '$median',
+                            p90: '$p90',
+                            docketsCount: '$docketsCount'
+                        }
+                    }
+                }
+            },
+            
+            // Stage 5: Final projection to match the desired output format
+            {
+                $project: {
+                    _id: 0,
+                    id: 1,
+                    data: 1
+                }
+            },
+            
+            // Stage 6: Sort by areaName (which is the 'id' field now)
+            {
+                $sort: {
+                    id: 1 // 1 for ascending order
+                }
+            }
+        ]);
+
+        const dateFilterForAssignment = {};
+        if (dateConditions.length > 0) {
+            dateFilterForAssignment.$and = dateConditions;
+        }
+
+        const assignmentTimeData = await IncidentDocketReportLapses.aggregate([
+            // Stage 1: Match documents based on date filters only
+            { $match: dateFilterForAssignment },
+            
+            // Stage 2: Group by month to create weighted averages
+            {
+                $group: {
+                    _id: {
+                        year: '$_id.year',
+                        month: '$_id.month'
+                    },
+                    totalDockets: { $sum: '$docketsCount' },
+                    weightedAvgSum: { $sum: { $multiply: ['$avgTimeToFirstAssignmentMinutes', '$docketsCount'] } },
+                    weightedMedianSum: { $sum: { $multiply: ['$medianTimeToFirstAssignmentMinutes', '$docketsCount'] } },
+                    weightedP90Sum: { $sum: { $multiply: ['$p90TimeToFirstAssignmentMinutes', '$docketsCount'] } }
+                }
+            },
+
+            // Stage 3: Calculate the final averages and format the date
+            {
+                $project: {
+                    _id: 0,
+                    x: {
+                        $concat: [
+                            { $arrayElemAt: [monthNames, { $subtract: ['$_id.month', 1] }] },
+                            ' ',
+                            { $substr: [{$toString: '$_id.year'}, 2, 2] }
+                        ]
+                    },
+                    year: '$_id.year',
+                    month: '$_id.month',
+                    avg: {
+                        $cond: { if: { $gt: ['$totalDockets', 0] }, then: { $divide: ['$weightedAvgSum', '$totalDockets'] }, else: 0 }
+                    },
+                    median: {
+                        $cond: { if: { $gt: ['$totalDockets', 0] }, then: { $divide: ['$weightedMedianSum', '$totalDockets'] }, else: 0 }
+                    },
+                    p90: {
+                        $cond: { if: { $gt: ['$totalDockets', 0] }, then: { $divide: ['$weightedP90Sum', '$totalDockets'] }, else: 0 }
+                    },
+                    docketCount: '$totalDockets'
+                }
+            },
+
+            // Stage 4: Sort by date
+            {
+                $sort: {
+                    year: 1,
+                    month: 1
+                }
+            }
+        ]);
+        
+        res.json({
+            areaLine: performanceData,
+            assignmentTime: assignmentTimeData
+        });
+
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 

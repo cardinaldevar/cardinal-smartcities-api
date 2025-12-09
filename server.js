@@ -19,8 +19,35 @@ const Vehicle = require('./models/Vehicle');
 const VehicleRoute = require('./utils/VehicleRoute');
 const AlertJob = require('./utils/AlertJob');
 const initializeDocketNotifier = require('./utils/DocketNotify');
+const { scheduleDocketReportJob, docketReportQueue,triggerImmediateReportJob } = require('./jobs/producers/docketReportProducer');
+require('./jobs/consumers/docketReportConsumer'); // Solo se importa para que se ejecute y adjunte el procesador
+
+const { createBullBoard } = require('@bull-board/api');
+const { BullAdapter } = require('@bull-board/api/bullAdapter');
+const { ExpressAdapter } = require('@bull-board/express');
+const session = require('express-session');
+const {RedisStore} = require("connect-redis") // Integrar connect-redis con express-session
+const { createClient } = require("redis");
+const redisClient = require('./config/redisClient');
+const passport = require('passport');
+const LocalStrategy = require('passport-local').Strategy;
+const bodyParser = require('body-parser');
+const { ensureLoggedIn } = require('connect-ensure-login');
 
 connectDB();
+
+// Crear y conectar un cliente 'node-redis' v4 para connect-redis v7+
+const redisOptions = { legacyMode: true };
+if (process.env.NODE_ENV === 'production') {
+  redisOptions.password = process.env.REDIS_DB_PROD;
+}
+const redisSessionClient = createClient(redisOptions);
+redisSessionClient.connect().catch(console.error);
+
+let redisStore = new RedisStore({
+  client: redisSessionClient, // Usar el nuevo cliente exclusivo para sesiones
+  prefix: "smartcities:sess:",
+})
 
 if(process.env.NODE_ENV === 'production'){ 
   initializeDocketNotifier();
@@ -30,7 +57,7 @@ if(process.env.NODE_ENV === 'production'){
 //global = connectDB();
 //console.log('GLOBAL',global); //connect DB
 
-var whitelist = ['https://ts-landing.cardinal.dev','https://gemini.cardinal.dev','https://admin.cardinal.dev','https://b763b788b690.ngrok-free.app','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com/','http://localhost:3000','http://localhost:3001','http://localhost:8080','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:3000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:5000','http://www.cardinaltigre.com','https://cardinaltigre.com','https://www.cardinaltigre.com','http://api.cardinaltigre.com','https://api.cardinaltigre.com','https://urbaser.cardinal.dev']
+var whitelist = ['https://ts-landing.cardinal.dev','https://gemini.cardinal.dev','https://admin.cardinal.dev','https://b3e03f3a92fe.ngrok-free.app','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com/','http://localhost:3000','http://localhost:3001','http://localhost:8080','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:3000','http://ec2-3-136-118-80.us-east-2.compute.amazonaws.com:5000','http://www.cardinaltigre.com','https://cardinaltigre.com','https://www.cardinaltigre.com','http://api.cardinaltigre.com','https://api.cardinaltigre.com','https://urbaser.cardinal.dev']
 
 const corsOptions = {
 
@@ -74,6 +101,72 @@ io.use((socket, next) => {
   
   
 });*/
+
+app.use(session({
+  store: redisStore,
+  name: "sid_smartcities",
+  resave: false, 
+  saveUninitialized: false, 
+  secret: process.env.REDIS_SESS
+}));
+
+const serverAdapter = new ExpressAdapter();
+serverAdapter.setBasePath('/ui');
+
+const { addQueue, removeQueue, setQueues, replaceQueues } = createBullBoard({
+  queues: [],
+  serverAdapter: serverAdapter,
+  options: {
+    uiConfig: {
+      boardTitle: 'Cardinal Smartcities',
+    }
+  }
+});
+
+// Add BullMQ queues to Bull Board
+addQueue(new BullAdapter(docketReportQueue));
+
+// Schedule the BullMQ job for report generation
+scheduleDocketReportJob();
+//triggerImmediateReportJob();
+
+passport.use(
+  new LocalStrategy(function (username, password, cb) {
+    if (username === 'cardinaldev' && password === 'Marona25&') {
+      return cb(null, { user: 'cardinal-board' });
+    }
+    return cb(null, false);
+  })
+);
+passport.serializeUser((user, cb) => {
+  cb(null, user);
+});
+
+passport.deserializeUser((user, cb) => {
+  cb(null, user);
+});
+
+app.set('views', __dirname + '/views');
+app.set('view engine', 'ejs');
+
+app.use(bodyParser.urlencoded({ extended: false }));
+
+// Initialize Passport and restore authentication state, if any, from the session.
+app.use(passport.initialize({}));
+app.use(passport.session({}));
+
+app.get('/ui/login', (req, res) => {
+  res.render('login', { invalid: req.query.invalid === 'true' });
+});
+
+app.post(
+  '/ui/login',
+  passport.authenticate('local', { failureRedirect: '/ui/login?invalid=true' }),
+  (req, res) => {
+    res.redirect('/ui');
+  }
+);
+app.use('/ui', ensureLoggedIn({ redirectTo: '/ui/login' }), serverAdapter.getRouter());
 
 cron.schedule("*/30 * * * *", () => {
   if(process.env.NODE_ENV === 'production'){ 
@@ -207,6 +300,7 @@ app.use(express.json({
     req.rawBody = buf.toString();
   }
  }));
+ 
 
 //define routes
 app.use("/api/user", require("./routes/api/user"));
