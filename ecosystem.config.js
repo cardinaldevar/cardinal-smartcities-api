@@ -8,7 +8,8 @@ module.exports = {
       "NODE_ENV": "development",
     },
     env_production : {
-       "NODE_ENV": "production"
+       "NODE_ENV": "production",
+       "REDIS_DB_PROD": "Cardinal!&2026acc"
     }
   }]
 
