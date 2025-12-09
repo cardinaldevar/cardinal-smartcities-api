@@ -1,3 +1,4 @@
+console.log(`[DEBUG] NODE_ENV: ${process.env.NODE_ENV}, REDIS_DB_PROD: ${process.env.REDIS_DB_PROD}`);
 require('dotenv').config();
 var cors = require('cors');
 const cron = require('node-cron')
