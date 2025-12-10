@@ -1661,8 +1661,32 @@ router.post('/docket', auth, upload.array('files', 5), async (req, res) => {
             details: detailsFromData,
             docket_type_stage,
             sentiments,
-            status
+            status,
+            isNewDocket,
+            suscribeDocket,
+            docketId
         } = data;
+        
+        if (suscribeDocket === true && docketId) {
+            const profileId = profileObj._id;
+
+            const subscriberObject = { profile: profileId };
+
+            const updatedDocket = await Docket.findByIdAndUpdate(
+                docketId,
+                { $addToSet: { subscribers: subscriberObject } },
+                { new: true }
+            );
+
+            if (!updatedDocket) {
+                return res.status(404).json({ msg: 'El legajo al que intentas suscribirte no fue encontrado.' });
+            }
+
+            return res.status(201).json({
+                msg: 'Te has suscripto al reclamo exitosamente.',
+                legajo: updatedDocket.docketId
+            });
+        }
 
         // Manual validation of inner fields
         const validationErrors = [];
@@ -1689,6 +1713,41 @@ router.post('/docket', auth, upload.array('files', 5), async (req, res) => {
 
         let details = detailsFromData;
         const companyId = new mongoose.Types.ObjectId(req.user.company);
+        const docketTypeId = docketTypeObj._id;
+        
+        let address = null;
+        let location = null;
+        if (detailsFromData && detailsFromData.address && detailsFromData.address.value && detailsFromData.address.location) {
+            address = detailsFromData.address.value;
+            location = detailsFromData.address.location;
+        }
+
+        //CHECK IF NEAR
+        if (!isNewDocket && location && location.coordinates && location.coordinates.length === 2) {
+            const sixMonthsAgo = new Date();
+            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+            const nearbyDocket = await Docket.find({
+                company: companyId,
+                docket_type: docketTypeId,
+                status: { $in: ['new', 'assigned', 'in_progress'] },
+                createdAt: { $gte: sixMonthsAgo },
+                location: {
+                    $near: {
+                        $geometry: {
+                            type: "Point",
+                            coordinates: location.coordinates
+                        },
+                        $maxDistance: 500 // metros
+                    }
+                }
+            }).sort({ createdAt: -1 }).select({ _id: 1, docketId: 1, description: 1, updatedAt: 1, address: 1 }).limit(3);
+
+            if (nearbyDocket.length >= 1) {
+                return res.status(409).json({msg: 'Ya existe un legajo similar creado recientemente cerca de esta ubicación, seleccione uno de los legajos para agregar como Suscripto al nuevo solicitante.', docketFound :nearbyDocket });
+            }
+        }
+
 
         if (req.files && req.files.length > 0) {
 
@@ -1707,17 +1766,9 @@ router.post('/docket', auth, upload.array('files', 5), async (req, res) => {
         }
 
         const profileId = profileObj._id;
-        const docketTypeId = docketTypeObj._id;
         const sourceId = sourceObj.value;
         let docket_type_predicted;
         let initialSentiment;
-        let address = null;
-        let location = null;
-
-        if (details && details.address && details.address.value && details.address.location) {
-            address = details.address.value;
-            location = details.address.location;
-        }
 
         if(docket_type_stage != 'predict'){
 

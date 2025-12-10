@@ -1,4 +1,3 @@
-console.log(`[DEBUG] NODE_ENV: ${process.env.NODE_ENV}, REDIS_DB_PROD: ${process.env.REDIS_DB_PROD}`);
 require('dotenv').config();
 var cors = require('cors');
 const cron = require('node-cron')
@@ -29,7 +28,6 @@ const { ExpressAdapter } = require('@bull-board/express');
 const session = require('express-session');
 const {RedisStore} = require("connect-redis") // Integrar connect-redis con express-session
 const { createClient } = require("redis");
-const redisClient = require('./config/redisClient');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const bodyParser = require('body-parser');
@@ -38,12 +36,13 @@ const { ensureLoggedIn } = require('connect-ensure-login');
 connectDB();
 
 // Crear y conectar un cliente 'node-redis' v4 para connect-redis v7+
-const redisOptions = { legacyMode: true };
+const redisOptions = {};
 if (process.env.NODE_ENV === 'production') {
   redisOptions.password = process.env.REDIS_DB_PROD;
 }
 const redisSessionClient = createClient(redisOptions);
-redisSessionClient.connect().catch(console.error);
+
+redisSessionClient.on('error', err => console.log('Redis Session Client Error', err));
 
 let redisStore = new RedisStore({
   client: redisSessionClient, // Usar el nuevo cliente exclusivo para sesiones
@@ -350,4 +349,11 @@ app.use("/api/public/landing", require("./routes/api/public/landing"));
 }*/
 console.log('node_env',process.env.NODE_ENV);
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(` Server start ${PORT}`));
+
+redisSessionClient.connect().then(() => {
+    console.log('> Redis Session Client Connected');
+    app.listen(PORT, () => console.log(` Server start ${PORT}`));
+}).catch(err => {
+    console.error('Failed to connect to Redis for sessions', err);
+    process.exit(1);
+});
