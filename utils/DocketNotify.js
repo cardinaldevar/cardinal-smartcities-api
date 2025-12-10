@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const IncidentDocket = require('../models/IncidentDocket');
 const IncidentProfile = require('../models/IncidentProfile');
 const DocketType = require('../models/IncidentDocketType');
@@ -260,6 +261,10 @@ const initializeDocketNotifier = () => {
 
     try {
         const pipeline = [
+            // TEMPORAL: Filtro para pruebas locales
+           /* {
+                $match: { 'fullDocument.docket_area': new mongoose.Types.ObjectId('6903a842ab02ef919023c1d8') }
+            },*/
             {
                 $addFields: {
                     updatedFieldKeys: { $ifNull: [{ $objectToArray: "$updateDescription.updatedFields" }, []] }
@@ -285,9 +290,16 @@ const initializeDocketNotifier = () => {
         changeStream.on('change', (change) => {
 
             console.log('**************',change.operationType,JSON.stringify(change.updateDescription))
+
+            
+            console.log('************** change.fullDocument',change.operationType,JSON.stringify(change.fullDocument))
             if (change.operationType === 'insert') {
+
                 handleNewDocket(change.fullDocument);
-                return;
+                // evaluate if assigned
+                const { status,docket_area} = change.fullDocument;
+                if (docket_area && status === 'assigned') { handleAreaNotify(change); }
+
             }
 
             if (change.operationType === 'update') {
@@ -316,6 +328,8 @@ const initializeDocketNotifier = () => {
                         handleResolvedDocket(change.documentKey._id);
                     }
                 }
+
+                 
                 
                 const subscriberAdded = Object.keys(updatedFields).some(key => /^subscribers\.\d+$/.test(key));
                 if (subscriberAdded) {
