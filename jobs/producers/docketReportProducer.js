@@ -6,6 +6,9 @@ const redisConnectionOptions = {
     port: process.env.REDIS_PORT || 6379,
     // password: process.env.REDIS_PASSWORD, // Descomentar si tienes una contraseña
 };
+if (process.env.NODE_ENV === 'production') {
+    redisConnectionOptions.password = process.env.REDIS_DB_PROD;
+}
 
 const docketReportQueue = new Queue('docket-report-generation', {
     redis: redisConnectionOptions
