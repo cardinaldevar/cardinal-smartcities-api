@@ -18,7 +18,7 @@ const PositionPanic = require('./models/PositionPanic');
 const Vehicle = require('./models/Vehicle');
 const VehicleRoute = require('./utils/VehicleRoute');
 const AlertJob = require('./utils/AlertJob');
-const initializeDocketNotifier = require('./utils/DocketNotify');
+const { initializeDocketNotifier } = require('./utils/DocketNotify');
 const { scheduleDocketReportJob, docketReportQueue,triggerImmediateReportJob } = require('./jobs/producers/docketReportProducer');
 require('./jobs/consumers/docketReportConsumer'); // Solo se importa para que se ejecute y adjunte el procesador
 
