@@ -21,6 +21,7 @@ const bcrypt = require('bcryptjs');
 const randtoken = require('rand-token');
 const { sendNewProfileEmail } = require('../../../utils/ses');
 const { statusIncident } = require('../../../utils/CONS.js');
+const { handleActivityAreaNotify } = require('../../../utils/DocketNotify');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -1639,7 +1640,7 @@ router.post('/docket', auth, upload.array('files', 5), async (req, res) => {
     try {
 
         let data;
-
+        console.log('req.files.length',req.files.length)
         // The client is sending the JSON payload in a single field in the FormData.
         // We find the first key in req.body and assume it's our JSON string.
 
@@ -1666,7 +1667,7 @@ router.post('/docket', auth, upload.array('files', 5), async (req, res) => {
             suscribeDocket,
             docketId
         } = data;
-        
+
         if (suscribeDocket === true && docketId) {
             const profileId = profileObj._id;
 
@@ -2598,7 +2599,9 @@ router.patch('/docket/update/status/:id', auth, upload.single('file'), [
 
     try {
         const { id } = req.params;
-        const { status: newStatus, observation } = req.body;
+        const { status: newStatus, observation, notifyArea } = req.body;
+        // Convert notifyArea to a boolean
+        const shouldNotifyArea = notifyArea === 'true';
         
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({ msg: 'ID de legajo no válido.' });
@@ -2657,8 +2660,14 @@ router.patch('/docket/update/status/:id', auth, upload.single('file'), [
 
         if (newStatus === 'activity') {
             // Only update the timestamp for 'activity' status
+            //check if notifyArea
+            if(shouldNotifyArea){
+                handleActivityAreaNotify(id, observation);
+            }
+
             originalDocket.updatedAt = new Date();
             await originalDocket.save();
+
         } else {
             // For any other status, update the status field and save
             originalDocket.status = newStatus;

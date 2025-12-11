@@ -88,6 +88,25 @@ const getNeighborAssignedDocketHtmlTemplate = (docketData) => {
     `;
 };
 
+const getAreaActivityHtmlTemplate = (docketData) => {
+    const { docketId, observation, logoUrl, companyName, companyWeb } = docketData;
+    return `
+        <!DOCTYPE html><html><head><style>${getBaseEmailStyles()}</style></head><body>
+            <div class="container">
+                <div class="header">${logoUrl ? `<a href="${companyWeb}" target="_blank"><img src="${logoUrl}" alt="${companyName}"></a>` : ''}</div>
+                <div class="content">
+                    <h2 style="text-align: center; color: #333;">Nueva Actividad en Legajo #${docketId}</h2>
+                    <p>Se ha registrado una nueva actividad en un legajo asignado a tu área.</p>
+                    <p><strong>Observación:</strong></p>
+                    <p><i>"${observation}"</i></p>
+                    <p>Por favor, revisa el legajo para más detalles.</p>
+                </div>
+                <div class="footer"><p>Este es un email automático, por favor no respondas a este mensaje.</p></div>
+            </div>
+        </body></html>
+    `;
+};
+
 // --- Generic Email Logic ---
 
 const sendEmail = async (addresses, subject, htmlData, options = { useBcc: false }) => {
@@ -201,6 +220,18 @@ const sendNeighborAssignedDocketEmail = async (docketData) => {
     const html = getNeighborAssignedDocketHtmlTemplate({ ...docketData, ...companyInfo });
     const subject = `Actualización de tu Legajo #${docketData.docketId} - ${companyInfo.companyName}`;
     return sendEmail([email], subject, html);
+};
+
+const sendAreaActivityEmail = async (docketData) => {
+    const { company, emails } = docketData;
+    if (!emails || emails.length === 0) return;
+
+    // Internal notifications do not check for individual user preferences.
+    // The 'notify' flag on the area itself is the primary control.
+    const companyInfo = await getCompanyDataForEmail(company);
+    const html = getAreaActivityHtmlTemplate({ ...docketData, ...companyInfo });
+    const subject = `Actividad en Legajo #${docketData.docketId} - ${companyInfo.companyName}`;
+    return sendEmail(emails, subject, html, { useBcc: true });
 };
 
 const getInProgressDocketHtmlTemplate = (docketData) => {
@@ -423,4 +454,4 @@ const sendNewPasswordEmail = async (resetData) => {
     return sendEmail([email], subject, html);
 };
 
-module.exports = { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewProfileEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail, sendNewPasswordEmail };
+module.exports = { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewProfileEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail, sendNewPasswordEmail, sendAreaActivityEmail };

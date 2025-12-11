@@ -4,7 +4,7 @@ const IncidentProfile = require('../models/IncidentProfile');
 const DocketType = require('../models/IncidentDocketType');
 const IncidentDocketHistory = require('../models/IncidentDocketHistory');
 const IncidentDocketArea = require('../models/IncidentDocketArea');
-const { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail } = require('./ses');
+const { sendNewDocketEmail, sendInternalAssignedDocketEmail, sendNeighborAssignedDocketEmail, sendNewSubscriberEmail, sendInProgressDocketEmail, sendOnHoldDocketEmail, sendResolvedDocketEmail, sendAreaActivityEmail } = require('./ses');
 
 const handleNewSubscriber = async (change) => {
     try {
@@ -218,6 +218,48 @@ const handleResolvedDocket = (docketId) => {
     handleStatusChange(docketId, 'resolved', 'Resuelto', sendResolvedDocketEmail);
 };
 
+const handleActivityAreaNotify = async (docketId, observation) => {
+    try {
+        const docket = await IncidentDocket.findById(docketId)
+            .populate({
+                path: 'docket_area',
+                select: 'name notify emails'
+            });
+
+        if (!docket) {
+            console.error(`[handleActivityAreaNotify] Docket ${docketId} not found.`);
+            return;
+        }
+
+        if (!docket.docket_area || docket.docket_area.length === 0) {
+            console.log(`[handleActivityAreaNotify] No areas assigned to docket ${docket.docketId}, no notification sent.`);
+            return; // No areas to notify
+        }
+
+        const areasToNotify = docket.docket_area.filter(area => area.notify && area.emails && area.emails.length > 0);
+        if (areasToNotify.length === 0) {
+            console.log(`[handleActivityAreaNotify] No areas with notifications enabled for docket ${docket.docketId}.`);
+            return; // No areas with notifications enabled
+        }
+
+        const allEmails = areasToNotify.flatMap(area => area.emails);
+        const uniqueEmails = [...new Set(allEmails)];
+
+        if (uniqueEmails.length > 0) {
+            console.log(`📧  New activity on Docket [${docket.docketId}]. Triggering INTERNAL email to ${uniqueEmails.length} address(es).`);
+            
+            await sendAreaActivityEmail({
+                emails: uniqueEmails,
+                docketId: docket.docketId,
+                observation: observation,
+                company: docket.company
+            });
+        }
+    } catch (error) {
+        console.error(`Error in handleActivityAreaNotify for docket ${docketId}:`, error);
+    }
+};
+
 const handleAreaNotify = async (change) => {
     try {
         const docket = change.fullDocument;
@@ -348,4 +390,4 @@ const initializeDocketNotifier = () => {
     }
 };
 
-module.exports = initializeDocketNotifier;
+module.exports = { initializeDocketNotifier, handleActivityAreaNotify };
