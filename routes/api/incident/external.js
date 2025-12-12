@@ -86,7 +86,7 @@ router.post(
         payload, process.env.SEC_TOKEN_INCIDENT, { expiresIn: '1h' },
         (err, token) => {
           if (err) throw err;
-          res.json({ token });
+          res.json({ token, user:payload.user });
         }
       );
     } catch (err) {
@@ -150,31 +150,58 @@ router.post('/forgot', [
 // @access  Private
 router.get('/docket', authIncident, async (req, res) => {
   try {
-    const dockets = await IncidentDocket.find({
-      $or: [
-        { profile: req.user.id },
-        { 'subscribers.profile': req.user.id }
-      ],
-      status: { $nin: ['closed', 'cancelled', 'archived', 'deleted'] }
-    })
-    .sort({ createdAt: -1 })
-    .limit(20)
-    .select('docketId description status createdAt updatedAt profile subscribers')
-    .lean();
+    const userId = new mongoose.Types.ObjectId(req.user.id);
 
-    const userId = req.user.id;
-    const responseDockets = dockets.map(docket => {
-      // Explicitly check if the user is in the subscribers list
-      const isListedAsSubscriber = docket.subscribers?.some(sub => sub.profile?.toString() === userId) || false;
-      
-      // A user is considered "subscribed" only if they are in the subscribers list AND not the main owner.
-      const isSubscribed = isListedAsSubscriber && docket.profile.toString() !== userId;
+    const dockets = await IncidentDocket.aggregate([
+        {
+            $match: {
+                $or: [
+                    { profile: userId },
+                    { 'subscribers.profile': userId }
+                ],
+                status: { $nin: ['closed', 'cancelled', 'archived', 'deleted'] }
+            }
+        },
+        { $sort: { updatedAt: -1, createdAt: -1 } },
+        { $limit: 20 },
+        {
+            $lookup: {
+                from: 'incident.history',
+                let: { docketId: '$_id' },
+                pipeline: [
+                    { $match: { $expr: { $eq: ['$docket', '$$docketId'] } } },
+                    { $sort: { createdAt: -1 } },
+                    { $limit: 1 }
+                ],
+                as: 'latestHistory'
+            }
+        },
+        {
+            $unwind: {
+                path: '$latestHistory',
+                preserveNullAndEmptyArrays: true
+            }
+        },
+        {
+            $project: {
+                docketId: 1,
+                description: 1,
+                status: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                latestHistory: 1,
+                isSubscribed: {
+                    $and: [
+                        { $ne: ["$profile", userId] },
+                        { $in: [userId, { $ifNull: [ "$subscribers.profile", [] ] } ] }
+                    ]
+                }
+            }
+        }
+    ]);
 
-      const { profile, subscribers, ...rest } = docket;
-      return { ...rest, isSubscribed };
-    });
-
-    res.json(responseDockets);
+    res.json(dockets);
+    
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
@@ -207,17 +234,88 @@ router.get('/docket/:docket_id/history', authIncident, async (req, res) => {
       return res.status(404).json({ msg: 'Docket not found or user not authorized' });
     }
 
-    const history = await IncidentDocketHistory.find({ docket: docketId })
-      .sort({ createdAt: -1 })
-      .limit(2)
+    const history = await IncidentDocketHistory.find({ docket: docketId,status:{$nin:['activity','deleted']} })
+
+      .sort({ createdAt: 1 })
+      .limit(4)
       .populate({
         path: 'user',
         select: 'name last', // Select name and last from the user model
         model: 'IncidentProfile' // Assuming IncidentProfile for external users
       })
-      .select('status content createdAt'); // Select relevant fields
+      .select('status content requiresResponse createdAt'); // Select relevant fields
 
     res.json(history);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+// @route   POST api/incident/external/docket/:docket_id/reply
+// @desc    Add a reply to a docket history
+// @access  Private
+router.post('/docket/:docket_id/reply', [
+  authIncident,
+  check('historyId', 'historyId is required').isMongoId(),
+  check('content', 'Content is required').not().isEmpty().trim(),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  try {
+    const { docket_id: docketId } = req.params;
+    const { historyId, content } = req.body;
+    const userId = req.user.id;
+
+    // Validate docketId
+    if (!mongoose.Types.ObjectId.isValid(docketId)) {
+      return res.status(400).json({ msg: 'Invalid Docket ID' });
+    }
+
+    // 1. Check if the user has access to this docket
+    const docket = await IncidentDocket.findOne({
+      _id: docketId,
+      $or: [
+        { profile: userId },
+        { 'subscribers.profile': userId }
+      ]
+    });
+
+    if (!docket) {
+      return res.status(404).json({ msg: 'Docket not found or user not authorized' });
+    }
+
+    // 2. Update the history item that requires a response
+    const updateResult = await IncidentDocketHistory.updateOne(
+        { _id: historyId, docket: docketId },
+        { $set: { requiresResponse: false } }
+    );
+
+    if (updateResult.matchedCount === 0) {
+        return res.status(404).json({ msg: 'History item not found for this docket.' });
+    }
+
+    // 3. Create the new "activity" history entry (the reply)
+    const newHistory = new IncidentDocketHistory({
+      docket: docketId,
+      user: userId,
+      userModel: 'IncidentProfile',
+      status: 'activity',
+      content: content,
+    });
+
+    await newHistory.save();
+
+    // 4. Update docket timestamp
+    docket.updatedAt = new Date();
+    await docket.save();
+
+    // 5. Return the newly created history entry
+    res.json(newHistory);
+
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');

@@ -19,6 +19,10 @@ const DocketHistorySchema = new Schema({
         required: true,
         enum: ['IncidentProfile', 'employee','users'] 
     },
+    requiresResponse: {
+        type: Boolean,
+        default: false
+    },
     status: {
         type: String,
         required: true,

@@ -2591,6 +2591,7 @@ router.patch('/docket/updatearea/:id', auth, async (req, res) => {
 
 router.patch('/docket/update/status/:id', auth, upload.single('file'), [
     check('status', 'El estado es requerido').not().isEmpty(),
+    check('requiresResponse', 'requiresResponse debe ser un booleano').optional().isBoolean()
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -2599,9 +2600,10 @@ router.patch('/docket/update/status/:id', auth, upload.single('file'), [
 
     try {
         const { id } = req.params;
-        const { status: newStatus, observation, notifyArea } = req.body;
+        const { status: newStatus, observation, notifyArea, requiresResponse } = req.body;
         // Convert notifyArea to a boolean
         const shouldNotifyArea = notifyArea === 'true';
+        const shouldRequireResponse = requiresResponse === 'true';
         
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({ msg: 'ID de legajo no válido.' });
@@ -2654,7 +2656,8 @@ router.patch('/docket/update/status/:id', auth, upload.single('file'), [
             userModel: 'users',
             status: newStatus,
             content: historyContent,
-            files: fileData ? [fileData] : []
+            files: fileData ? [fileData] : [],
+            requiresResponse: shouldRequireResponse
         });
         await newHistory.save();
 
